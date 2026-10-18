@@ -1,0 +1,58 @@
+name: Docker ARM64
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feat/arm64-docker]
+    paths:
+      - Dockerfile.arm64
+      - .github/workflows/docker-arm64.yml
+      - scripts/smoke-arm64-image.sh
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-arm64-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test-publish:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - name: Build ARM64 image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: Dockerfile.arm64
+          platforms: linux/arm64
+          load: true
+          tags: openmausbot:arm64-test
+          labels: org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha,scope=omb-arm64
+          cache-to: type=gha,mode=max,scope=omb-arm64
+      - name: Test native modules, browser, server and proxy authentication
+        run: bash scripts/smoke-arm64-image.sh openmausbot:arm64-test
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish tested image
+        env:
+          REPOSITORY: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${REPOSITORY,,}"
+          docker tag openmausbot:arm64-test "$image:arm64"
+          docker tag openmausbot:arm64-test "$image:arm64-$COMMIT_SHA"
+          docker push "$image:arm64-$COMMIT_SHA"
+          docker push "$image:arm64"
+          echo "Published $image:arm64" >> "$GITHUB_STEP_SUMMARY"

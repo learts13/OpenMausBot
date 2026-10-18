@@ -1,0 +1,50 @@
+FROM node:24-bookworm-slim AS build
+WORKDIR /src
+RUN test "$(dpkg --print-architecture)" = arm64
+RUN npm install -g pnpm@10.33.0
+ENV ELECTRON_SKIP_BINARY_DOWNLOAD=1
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY apps/docs/package.json ./apps/docs/package.json
+COPY cloudflare/control-plane/package.json ./cloudflare/control-plane/package.json
+COPY scripts/install-git-hooks.mjs ./scripts/install-git-hooks.mjs
+RUN pnpm install --frozen-lockfile
+COPY . .
+# Desktop packaging defaults to x64 on Linux; the server needs native ARM64 bindings.
+RUN node --input-type=module -e 'import { stageDuckdb } from "./scripts/prepare-duckdb.mjs"; await stageDuckdb({ root: process.cwd(), targets: [{ platform: "linux", arch: "arm64" }], sign: false });' \
+    && chmod -R go-w dist-native/duckdb
+RUN pnpm build:server && pnpm exec vite build && chmod -R go-w dist dist-server
+
+FROM node:24-bookworm-slim AS server
+RUN test "$(dpkg --print-architecture)" = arm64 \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+       ca-certificates curl git chromium fonts-noto-color-emoji fonts-noto-cjk fonts-freefont-ttf \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --home-dir /data --shell /bin/bash maus
+# Chrome for Testing has no Linux ARM64 build; Debian supplies native Chromium.
+ARG AGENT_BROWSER_VERSION=0.37.0
+RUN npm install -g --cache /tmp/npm-cache agent-browser@${AGENT_BROWSER_VERSION} \
+    && native="$(readlink -f "$(command -v agent-browser)")" \
+    && case "$native" in */agent-browser/bin/agent-browser-linux-arm64) ;; *) echo "Expected native ARM64 agent-browser: $native" >&2; exit 1;; esac \
+    && agent-browser --version \
+    && chromium --version \
+    && rm -rf /tmp/npm-cache /tmp/node-compile-cache
+ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium \
+    OMB_DUCKDB_DIR=/app/duckdb \
+    OMB_DATA_DIR=/data/.openmausbot \
+    OMB_STATIC_DIR=/app/dist \
+    OMB_PORT=8799 \
+    OMB_WEBHOOK_PORT=8800 \
+    NODE_ENV=production
+WORKDIR /app
+ARG ENGINES=""
+RUN if [ -n "$ENGINES" ]; then HOME=/tmp/omb-build-home npm install -g $ENGINES && rm -rf /tmp/omb-build-home /tmp/node-compile-cache; fi
+COPY --from=build --chown=maus:maus /src/dist-native/duckdb/linux-arm64 ./duckdb
+COPY --from=build --chown=maus:maus /src/dist-server ./dist-server
+COPY --from=build --chown=maus:maus /src/dist ./dist
+ENV HOME=/data
+VOLUME ["/data"]
+USER maus
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=5 \
+    CMD curl -sf http://127.0.0.1:8799/api/health | grep -q openmausbot || exit 1
+CMD ["node", "dist-server/server-launcher.js"]
