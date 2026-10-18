@@ -24,6 +24,8 @@ test("the Cloud verdict: same account and machine run, anything else ends or pau
   assert.deepEqual(cloudLendingVerdict(binding, connected, { origin: "https://evil.example" }), { stop: "machine-changed" });
   assert.deepEqual(cloudLendingVerdict(binding, { status: "reauth-required", accountId: "acct_1", origin: null }, env), { pause: "reauth-required" });
   assert.deepEqual(cloudLendingVerdict(undefined, connected, env), { stop: "signed-out" });
+  // A saved sign-in still being read at startup is not a sign-out.
+  assert.deepEqual(cloudLendingVerdict(binding, { status: "restoring", accountId: null, origin: null }, env), { pause: "restoring" });
 });
 
 async function scratch(t) {
@@ -32,9 +34,9 @@ async function scratch(t) {
   return dir;
 }
 
-function cloudHome({ cloudHome = true, scopes = ["admin", "client"] } = {}) {
+function cloudHome({ cloudHome = true, scopes = ["admin", "client"], details = false } = {}) {
   const json = (value, status = 200) => ({ ok: status < 400, status, body: (async function* () { yield Buffer.from(JSON.stringify(value)); })() });
-  const state = { paired: true, environmentId: randomUUID(), sessionId: randomUUID(), connects: [], disconnects: 0, results: [], queue: [], waiting: null };
+  const state = { paired: true, environmentId: randomUUID(), sessionId: randomUUID(), connects: [], disconnects: 0, disconnectBodies: [], results: [], queue: [], waiting: null };
   const nextJob = () => new Promise(resolve => { state.waiting = resolve; });
   state.push = operation => {
     const job = { id: randomUUID(), operation: { computer_id: state.connects.at(-1).id, ...operation } };
@@ -43,7 +45,7 @@ function cloudHome({ cloudHome = true, scopes = ["admin", "client"] } = {}) {
   state.fetch = async (url, init) => {
     const route = new URL(url).pathname;
     if (route === "/api/auth/session") return state.paired ? json({ kind: "session", id: state.sessionId, scopes, ...(cloudHome ? { cloudHome: true } : {}) }) : json({ error: "unauthorized" }, 401);
-    if (route === "/.well-known/openmausbot/environment") return json({ environmentId: state.environmentId, capabilities: { sharedComputers: true } });
+    if (route === "/.well-known/openmausbot/environment") return json({ environmentId: state.environmentId, capabilities: { sharedComputers: true, ...(details ? { lendingDetails: true } : {}) } });
     const body = init?.body ? JSON.parse(init.body) : {};
     if (route === "/api/shared-computers/connect") { state.connects.push(body); return json({ ok: true }); }
     if (route.endsWith("/poll")) {
@@ -53,7 +55,7 @@ function cloudHome({ cloudHome = true, scopes = ["admin", "client"] } = {}) {
     }
     if (route.endsWith("/lease")) return json({ active: true });
     if (route.endsWith("/result")) { state.results.push(body.result); return json({ ok: true }); }
-    if (route.endsWith("/disconnect")) { state.disconnects++; return json({ ok: true }); }
+    if (route.endsWith("/disconnect")) { state.disconnects++; state.disconnectBodies.push(body); return json({ ok: true }); }
     throw new Error(`no route ${route}`);
   };
   return state;
@@ -86,6 +88,7 @@ async function lendingFixture(t, options = {}) {
   const driver = await hangingDriver(dir);
   const sharing = createComputerSharing({
     file: path.join(dir, "profile", "computer-sharing.json"), fetch: home.fetch, environments: () => [env],
+    ...(options.reconnect ? { reconnect: options.reconnect } : {}), ...(options.now ? { now: options.now } : {}),
     // The maintainer flag is off, as for every Cloud Pro user.
     enabled: async () => { maintainerChecks++; return false; },
     cloud: () => cloud, home: path.join(dir, "home"),
@@ -168,6 +171,20 @@ test("another server behind the Cloud's address (a replaced machine) ends lendin
   restarted.start({ maintainer: false });
   await until(() => restarted.cloudState(env).problem === "machine-changed", "machine-changed");
   assert.equal(restarted.cloudState(env).enabled, false);
+  // Why it stopped outlives the app: after another restart the switch still says why and since when.
+  restarted.close();
+  const later = createComputerSharing({
+    file: path.join(dir, "profile", "computer-sharing.json"), fetch: home.fetch, environments: () => [env], enabled: async () => false,
+    cloud: () => ({ status: "connected", accountId: "acct_1", origin: ORIGIN }), home: path.join(dir, "home"), cuaConnection: async () => null,
+  });
+  t.after(() => later.close());
+  later.start({ maintainer: false });
+  const stopped = later.cloudState(env);
+  assert.equal(stopped.enabled, false);
+  assert.equal(stopped.stopped.reason, "machine-changed");
+  assert.ok(Math.abs(stopped.stopped.at - Date.now()) < 60_000);
+  assert.equal(stopped.screen, false);
+  assert.equal(stopped.folders.length, 1, "the choices are kept, so the same can be lent again in one click");
   assert.equal(home.connects.length, 1);
 });
 
@@ -219,6 +236,8 @@ test("another Cloud account or another machine ends lending; a sign-in that need
     sharing.cloudChanged();
     assert.deepEqual([sharing.cloudState(env).enabled, sharing.cloudState(env).connected, sharing.cloudState(env).problem], [true, false, "paused"]);
     assert.ok(home.disconnects >= 1, "the Cloud stops seeing it while paused");
+    await until(() => home.disconnectBodies.length >= 1, "the pause to reach the Cloud");
+    assert.ok(home.disconnectBodies.every(body => body.paused === true), "a pause tells the Cloud it is still lent");
     setCloud({ status: "connected", accountId: "acct_1", origin: ORIGIN });
     sharing.cloudChanged();
     await connected(sharing, 2, home);
@@ -237,6 +256,7 @@ test("Stop lending is instant: the Cloud is told, running work is cancelled, and
   assert.equal(stopped.enabled, false);
   await until(() => !alive(pid), "the driver transport to be closed");
   await until(() => home.disconnects >= 1, "the Cloud to be told");
+  assert.deepEqual(home.disconnectBodies, [{}], "Stop lending is no pause");
   home.push({ action: "computer_call", tool_name: "click", arguments: {} });
   await delay(300);
   assert.equal((await readFile(driver.calls, "utf8")).trim(), "drag");
@@ -298,4 +318,65 @@ test("the menu-bar indicator exists only while lending, says when the Cloud is u
   assert.deepEqual([stops, opens], [1, 1]);
   indicator.update({ lending: false, busy: true });
   assert.equal(trays[0].destroyed, true, "gone as soon as lending ends");
+});
+
+test("Stop lending is remembered as the person's own choice, with when, and a new lend clears it", async t => {
+  const { folderPath, home, sharing } = await lendingFixture(t);
+  await sharing.saveCloud(env, { folders: [{ id: randomUUID(), path: folderPath, write: false }], screen: true });
+  await connected(sharing, 1, home);
+  assert.equal(sharing.cloudState(env).stopped, undefined);
+  sharing.revoke(env);
+  assert.equal(sharing.cloudState(env).stopped.reason, "you");
+  assert.equal(sharing.cloudState(env).screen, true);
+  await sharing.saveCloud(env, { folders: sharing.cloudState(env).folders, screen: true });
+  assert.equal(sharing.cloudState(env).enabled, true);
+  assert.equal(sharing.cloudState(env).stopped, undefined);
+});
+
+test("a Computer access grant on My Cloud's entry shows as lent, terminal and all, says when it cannot run, and Stop lending ends it", async t => {
+  const dir = await scratch(t);
+  const file = path.join(dir, "profile", "computer-sharing.json");
+  await mkdir(path.dirname(file), { recursive: true });
+  // What Settings → Servers → Computer access saved for My Cloud's entry before it left that entry: no Cloud binding.
+  await writeFile(file, JSON.stringify({ version: 1, records: { [env.id]: { id: randomUUID(), secret: "c".repeat(64), enabled: true, sessionId: randomUUID(), environmentId: randomUUID(), folders: [], terminal: true, computer: true } } }));
+  const home = cloudHome();
+  const sharing = createComputerSharing({ file, fetch: home.fetch, environments: () => [env], enabled: async () => false,
+    cloud: () => ({ status: "connected", accountId: "acct_1", origin: ORIGIN }), home: path.join(dir, "home"), cuaConnection: async () => null });
+  t.after(() => sharing.close());
+  sharing.start({ maintainer: false });
+  const state = sharing.cloudState(env);
+  assert.deepEqual([state.enabled, state.via, state.terminal, state.screen, state.problem], [true, "access", true, true, "access-off"]);
+  sharing.revoke(env);
+  assert.equal(sharing.cloudState(env).enabled, false);
+  assert.equal(sharing.cloudState(env).via, undefined);
+});
+
+test("tells My Cloud its platform only when that Cloud takes it, so its bots say PC on Windows and Mac only on a Mac", async t => {
+  for (const details of [true, false]) {
+    const { folderPath, home, sharing } = await lendingFixture(t, { home: { details } });
+    await sharing.saveCloud(env, { folders: [{ id: randomUUID(), path: folderPath, write: false }], screen: false });
+    await connected(sharing, 1, home);
+    if (details) assert.equal(home.connects[0].platform, process.platform);
+    else assert.equal("platform" in home.connects[0], false, "an older Cloud refuses fields it does not know");
+  }
+});
+
+test("signs back in to My Cloud by itself when its session there ended, and tries again only after 15 minutes", async t => {
+  let calls = 0;
+  const signIn = { home: null };
+  const { folderPath, home, sharing } = await lendingFixture(t, { reconnect: async origin => { calls++; assert.equal(origin, ORIGIN); signIn.home.paired = true; return true; } });
+  signIn.home = home;
+  home.paired = false;
+  await sharing.saveCloud(env, { folders: [{ id: randomUUID(), path: folderPath, write: false }], screen: false });
+  await connected(sharing, 1, home);
+  assert.equal(calls, 1);
+
+  let tries = 0;
+  const stuck = await lendingFixture(t, { now: () => 1_000_000, reconnect: async () => { tries++; return false; } });
+  stuck.home.paired = false;
+  await stuck.sharing.saveCloud(env, { folders: [{ id: randomUUID(), path: stuck.folderPath, write: false }], screen: false });
+  await until(() => stuck.sharing.cloudState(env).problem === "connect-first", "connect-first");
+  await delay(5_600);
+  assert.equal(tries, 1, "a failed sign-in is not retried every few seconds");
+  assert.equal(stuck.sharing.cloudState(env).problem, "connect-first");
 });

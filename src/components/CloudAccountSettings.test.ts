@@ -10,7 +10,9 @@ vi.mock("react", async original => ({ ...await original<typeof import("react")>(
   useEffect: (effect: EffectCallback) => { f.effects.push(effect); },
 }));
 vi.mock("./DesktopCapabilities", () => ({ useDesktopCapabilities: () => ({ capabilities: { host: { platform: f.platform } }, ready: true }) }));
+vi.mock("@/state/store", async original => ({ ...await original<typeof import("@/state/store")>(), useStore: () => ({ state: { bots: [{ name: "Ember" }] }, dispatch: vi.fn() }) }));
 import { CloudAccountSettings, CloudPlanOnCloud, cloudLinkAction, cloudPlanLabel } from "./CloudAccountSettings";
+import { LentComputersCard } from "./LentComputers";
 type Node = ReactElement<{ children?: ReactNode; onClick?: () => void }>;
 function nodes(value: ReactNode): Node[] { if (!isValidElement(value)) return []; const node = value as Node; return [node, ...Children.toArray(node.props.children).flatMap(nodes)]; }
 function render(props?: { linkRequest?: number; cloudHome?: boolean; onConnectPhone?: () => void; onAddCloud?: () => void; onSignIn?: () => void }) { f.index = 0; f.effects = []; let tree: ReactNode; function Capture() { tree = CloudAccountSettings(props); return tree; }
@@ -410,8 +412,11 @@ it("on the Cloud itself, opens this Cloud's phone pairing directly; never where 
   expect(onConnectPhone).toHaveBeenCalledOnce();
   expect(plan.manage).not.toHaveBeenCalled();
   vi.stubGlobal("window", { ogb: { cloudPlan: plan } });
-  const [card] = render({ cloudHome: true, onConnectPhone }).nodes as unknown as Array<ReactElement<{ onConnectPhone?: () => void }>>;
-  expect(card!.type).toBe(CloudPlanOnCloud); expect(card!.props.onConnectPhone).toBe(onConnectPhone);
+  const onCloud = render({ cloudHome: true, onConnectPhone }).nodes as unknown as Array<ReactElement<{ onConnectPhone?: () => void }>>;
+  const card = onCloud.find(node => node.type === CloudPlanOnCloud);
+  expect(card!.props.onConnectPhone).toBe(onConnectPhone);
+  // My Cloud's own page also shows the computers lent to it.
+  expect(onCloud.some(node => node.type === LentComputersCard)).toBe(true);
   expect(view({}).html).not.toContain(PHONE);
   plan.state.mockRejectedValueOnce(new Error("cloud-plan:state is only available in this app's window")); f.values = []; view({ onConnectPhone }); f.effects[0](); await flush();
   expect(view({ onConnectPhone }).nodes.some(node => node.type === "button")).toBe(false);
@@ -428,6 +433,7 @@ it("once the Cloud is ready, offers Copy this computer here for the Cloud itself
   await flush();
   expect(move.state.mock.calls).toContainEqual(["cloud"]);
   expect(render().html).toContain("Copy this computer&#x27;s bots and chats");
+  expect(render().html).toContain("My Cloud has its own, and this computer has its own: Ember.");
 });
 
 const ENDS = new Date(2026, 9, 15, 12).getTime(), DAY = 86_400_000;

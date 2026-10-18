@@ -10,6 +10,7 @@ import { redactSecretsInText } from "./redact.ts";
 import type { GroupGoalRunStatus } from "../shared/group-goal-run.ts";
 import type { RoutineRequestOperation } from "../shared/routine-request.ts";
 import { normalizeCronSchedule, nextCronRuns, type RoutineCronSchedule } from "../shared/routine-schedule.ts";
+import { clockMinutes, INTERVAL_RESTRICTION_SEARCH_MS, intervalAllowsOccurrence, intervalHasRestrictions, isSameLocalDay, latestIntervalOccurrence, MAX_DATE_MS, nextAlignedInterval } from "./routine-intervals.ts";
 import {
   isRoutineProblemRun, type RoutineContextAttachment, type RoutineIntervalWindow, type RoutineRetryCause, type RoutineRunStatus, type RoutineRunTrigger,
 } from "../shared/routines.ts";
@@ -22,8 +23,11 @@ import {
   dispatchRefusal, engineFacts, loadOwnerNotices, recoverRun, requeueOnce, weekRuns, type RoutineAlert, type RoutineFailureFacts, type RoutineOwnerNotice,
 } from "./routine-recovery.ts";
 import { activeMs, askOf, settleAsk, waitingFor, type RoutineRunAsk } from "./routine-waits.ts";
+import { failsLikeLastOutcome, outcomesNewestFirst } from "./routine-outcomes.ts";
+import { EVENT_RETRY_WINDOW_MS, loadEventReceipts, MAX_EVENT_RECEIPTS, type EventRunReceipt } from "./routine-event-receipts.ts";
 
 export type { RoutineContextAttachment, RoutineIntervalWindow, RoutineRunStatus, RoutineRunTrigger };
+export { intervalHasRestrictions } from "./routine-intervals.ts";
 
 export interface RoutineIntervalSchedule {
   type: "interval";
@@ -134,6 +138,8 @@ export interface RoutineRun {
   /** Time spent waiting on the person's answers, which the run limit does not count. */
   waitedMs?: number;
   triggerSource?: RoutineRunTrigger;
+  /** "app": a connected-app event started it (its triggerSource stays "webhook", an outside event). */
+  eventSource?: "app";
   webhookId?: string;
   deliveryId?: string;
   sourceThreadId?: string;
@@ -199,20 +205,11 @@ interface RoutineFile {
   routines: Routine[];
   runs: RoutineRun[];
   routineRequestReceipts?: RoutineRequestReceipt[];
-  webhookRunReceipts?: WebhookRunReceipt[];
+  webhookRunReceipts?: EventRunReceipt[];
   startupLaunchId?: string;
   ownerNotices?: RoutineOwnerNotice[];
 }
 
-const webhookRunReceiptSchema = z.object({
-  webhookId: z.string().min(1).max(200),
-  deliveryId: z.string().min(1).max(200),
-  runId: z.string().min(1),
-  acceptedAt: z.number().finite().nonnegative(),
-});
-type WebhookRunReceipt = z.infer<typeof webhookRunReceiptSchema>;
-const WEBHOOK_RETRY_WINDOW_MS = 7 * 24 * 60 * 60_000;
-const MAX_WEBHOOK_RECEIPTS = 20_000;
 
 export type RoutineRequestOwner = Pick<RoutineRequestReceipt, "requestId" | "messageId" | "botId" | "threadId">;
 
@@ -274,10 +271,6 @@ const CATCH_UP_MS = 12 * 60 * 60_000;
 const WAKE_HORIZON_MS = 60 * 60_000;
 
 export const ROUTINE_RESTARTED = "OpenMausBot restarted while this routine was running";
-const MAX_DATE_MS = 8_640_000_000_000_000;
-const LOCAL_DAY_MS = 24 * 60 * 60_000;
-const INTERVAL_RESTRICTION_SEARCH_MS = 9 * LOCAL_DAY_MS;
-const CLOCK_TIME = /^([01]\d|2[0-3]):([0-5]\d)$/;
 const MAX_RUNS = 2_000;
 const MAX_ATTACHMENTS = 50;
 const attachmentSchema = z.object({
@@ -421,11 +414,6 @@ function cleanIntervalWeekdays(value: unknown): number[] | undefined {
   return weekdays.length === ALL_DAYS.length ? undefined : weekdays;
 }
 
-function clockMinutes(value: string): number | null {
-  const match = CLOCK_TIME.exec(value);
-  return match ? Number(match[1]) * 60 + Number(match[2]) : null;
-}
-
 function cleanIntervalWindow(value: unknown, everyMinutes: number): RoutineIntervalWindow | undefined {
   if (value == null) return undefined;
   if (typeof value !== "object" || Array.isArray(value)) {
@@ -518,39 +506,6 @@ function loadSchedule(value: unknown, after: number): RoutineSchedule | null {
   }
 }
 
-export function intervalHasRestrictions(
-  schedule: Pick<RoutineIntervalSchedule, "weekdays" | "window" | "endsAt">,
-): boolean {
-  return schedule.weekdays !== undefined || schedule.window !== undefined || schedule.endsAt !== undefined;
-}
-
-function intervalAllowsOccurrence(schedule: RoutineIntervalSchedule, at: number): boolean {
-  if (schedule.endsAt !== undefined && at > schedule.endsAt) return false;
-  const date = new Date(at);
-  if (schedule.weekdays && !schedule.weekdays.includes(date.getDay())) return false;
-  if (schedule.window) {
-    const minute = date.getHours() * 60 + date.getMinutes();
-    const start = clockMinutes(schedule.window.start)!;
-    const end = clockMinutes(schedule.window.end)!;
-    if (minute < start || minute >= end) return false;
-  }
-  return true;
-}
-
-function isSameLocalDay(left: number, right: number): boolean {
-  const a = new Date(left);
-  const b = new Date(right);
-  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-}
-
-function nextAlignedInterval(schedule: RoutineIntervalSchedule, after: number): number | null {
-  if (schedule.anchorAt > after) return schedule.anchorAt;
-  const intervalMs = schedule.everyMinutes * 60_000;
-  const intervalsElapsed = Math.floor((after - schedule.anchorAt) / intervalMs);
-  const candidate = schedule.anchorAt + (intervalsElapsed + 1) * intervalMs;
-  return Number.isSafeInteger(candidate) && candidate <= MAX_DATE_MS ? candidate : null;
-}
-
 export function nextOccurrence(schedule: RoutineSchedule, after: number): number | null {
   if (schedule.type === "once") return schedule.at > after ? schedule.at : null;
   if (schedule.type === "cron") return nextCronRuns(schedule, after, 1)[0] ?? null;
@@ -574,25 +529,6 @@ export function nextOccurrence(schedule: RoutineSchedule, after: number): number
     d.setDate(d.getDate() + offset);
     d.setHours(hour, minute, 0, 0);
     if (d.getTime() > after && weekdays.has(d.getDay())) return d.getTime();
-  }
-  return null;
-}
-
-function latestIntervalOccurrence(
-  schedule: RoutineIntervalSchedule,
-  at: number,
-): number | null {
-  const intervalMs = schedule.everyMinutes * 60_000;
-  const ceiling = Math.min(at, schedule.endsAt ?? at);
-  if (schedule.anchorAt > ceiling) return null;
-  let candidate = schedule.anchorAt + Math.floor((ceiling - schedule.anchorAt) / intervalMs) * intervalMs;
-  if (!intervalHasRestrictions(schedule)) return candidate;
-  const maxCandidates = Math.ceil(INTERVAL_RESTRICTION_SEARCH_MS / intervalMs) + 2;
-  for (let checked = 0; checked < maxCandidates; checked++) {
-    if (intervalAllowsOccurrence(schedule, candidate)) return candidate;
-    const previous = candidate - intervalMs;
-    if (!Number.isSafeInteger(previous) || previous < schedule.anchorAt) return null;
-    candidate = previous;
   }
   return null;
 }
@@ -674,7 +610,7 @@ export class RoutineManager {
   private unloadedRoutines: Routine[] = [];
   private runs: RoutineRun[] = [];
   private routineRequestReceipts: RoutineRequestReceipt[] = [];
-  private webhookRunReceipts: WebhookRunReceipt[] = [];
+  private webhookRunReceipts: EventRunReceipt[] = [];
   private timer: ReturnType<typeof setInterval> | null = null;
   private startupRunsQueued = false;
   private startupLaunchId: string | undefined;
@@ -759,23 +695,10 @@ export class RoutineManager {
             Number.isFinite(receipt?.appliedAt)
           )
         : [];
-      this.webhookRunReceipts = Array.isArray(disk.webhookRunReceipts)
-        ? disk.webhookRunReceipts.flatMap((receipt) => {
-            const parsed = webhookRunReceiptSchema.safeParse(receipt);
-            return parsed.success ? [parsed.data] : [];
-          })
-        : [];
+      this.webhookRunReceipts = loadEventReceipts(disk.webhookRunReceipts, this.runs, this.now());
       this.frozenPending = disk.frozenResultsCleared !== true;
       this.ownerNotices = loadOwnerNotices(disk.ownerNotices);
       if (typeof disk.startupLaunchId === "string") this.startupLaunchId = disk.startupLaunchId;
-      const known = new Set(this.webhookRunReceipts.map((r) => JSON.stringify([r.webhookId, r.deliveryId])));
-      for (const run of this.runs) {
-        if (!run.webhookId || !run.deliveryId || run.createdAt < this.now() - WEBHOOK_RETRY_WINDOW_MS) continue;
-        const key = JSON.stringify([run.webhookId, run.deliveryId]);
-        if (known.has(key)) continue;
-        this.webhookRunReceipts.push({ webhookId: run.webhookId, deliveryId: run.deliveryId, runId: run.id, acceptedAt: run.createdAt });
-        known.add(key);
-      }
     } catch (error) {
       this.routines = [];
       this.unloadedRoutines = [];
@@ -826,8 +749,7 @@ export class RoutineManager {
   }
 
   private routineWithHealth(routine: Routine): Routine {
-    const outcomes = this.runs.filter(run => run.routineId === routine.id && (run.status === "failed" || run.status === "completed")).reverse()
-      .sort((a, b) => (b.finishedAt ?? b.createdAt) - (a.finishedAt ?? a.createdAt) || b.createdAt - a.createdAt);
+    const outcomes = outcomesNewestFirst(this.runs, routine.id);
     const success = outcomes.findIndex(run => run.status === "completed");
     const failures = success < 0 ? outcomes.length : success;
     const { installedPackage: _installedPackage, ...visible } = cloneRoutine(routine);
@@ -1012,6 +934,7 @@ export class RoutineManager {
     if (this.targetState(clean) === "missing") throw new Error(this.missingTargetMessage(clean.target));
     const scheduleChanged = JSON.stringify(clean.schedule) !== JSON.stringify(routine.schedule);
     const enabledChanged = clean.enabled !== routine.enabled;
+    if (enabledChanged && clean.enabled && clean.schedule.type === "once" && clean.schedule.at <= now) throw new RoutineScheduleError("Its time has passed. Edit it to pick a new time.");
     const nextRunAt = !clean.enabled ? null : scheduleChanged || enabledChanged
       ? this.initialOccurrence(clean.schedule, now)
       : routine.nextRunAt;
@@ -1079,16 +1002,9 @@ export class RoutineManager {
     return true;
   }
 
-  disableForBot(botId: string) {
-    let changed = false;
-    for (const routine of this.routines) {
-      if (routine.botId !== botId || !routine.enabled) continue;
-      routine.enabled = false;
-      routine.nextRunAt = null;
-      routine.updatedAt = Math.max(this.now(), routine.updatedAt + 1);
-      this.emitRoutine(routine);
-      changed = true;
-    }
+  /** A deleted bot's schedules go with it: each is removed, its unfinished runs stop, and its run history is dropped. */
+  removeForBot(botId: string) {
+    for (const routine of this.routines.filter((candidate) => candidate.botId === botId)) this.remove(routine.id);
     for (const run of this.runs) {
       if (run.botId !== botId || !["queued", "running", "waiting"].includes(run.status)) continue;
       run.status = "cancelled";
@@ -1097,16 +1013,11 @@ export class RoutineManager {
       run.finishedAt = this.now();
       run.error = "The assigned bot was deleted";
       this.emitRun(run);
-      if (run.threadId) {
-        if (run.target === "room-goal" && run.groupId) {
-          void this.options.interruptGoal?.(run.groupId, run.threadId).catch(() => {});
-        } else {
-          void this.options.interruptTurn?.(run.botId, run.threadId).catch(() => {});
-        }
-      }
-      changed = true;
+      if (run.threadId && run.target === "room-goal" && run.groupId) void this.options.interruptGoal?.(run.groupId, run.threadId).catch(() => {});
+      else if (run.threadId) void this.options.interruptTurn?.(run.botId, run.threadId).catch(() => {});
     }
-    if (changed) this.save();
+    const kept = this.runs.filter((run) => run.botId !== botId);
+    if (kept.length !== this.runs.length) this.commitMutation(() => { this.runs = kept; });
   }
 
   disableForGroup(groupId: string) {
@@ -1166,7 +1077,7 @@ export class RoutineManager {
   webhookRunReceipt(webhookId: string, deliveryId: string): { id: string } | null {
     const receipt = this.webhookRunReceipts.find((candidate) =>
       candidate.webhookId === webhookId && candidate.deliveryId === deliveryId &&
-      candidate.acceptedAt >= this.now() - WEBHOOK_RETRY_WINDOW_MS);
+      candidate.acceptedAt >= this.now() - EVENT_RETRY_WINDOW_MS);
     if (receipt) return { id: receipt.runId };
     const active = this.runs.find((run) => run.webhookId === webhookId && run.deliveryId === deliveryId &&
       ["queued", "running", "waiting"].includes(run.status));
@@ -1181,6 +1092,7 @@ export class RoutineManager {
     runOn: RoutineRunOn;
     deliveryId: string;
     receivedAt: number;
+    eventSource?: "app";
   }): { id: string } {
     this.assertWritable();
     const existing = this.webhookRunReceipt(input.webhookId, input.deliveryId);
@@ -1189,43 +1101,48 @@ export class RoutineManager {
       throw Object.assign(new Error("The assigned MAUS no longer exists"), { status: 410 });
     }
     const run: RoutineRun = {
-      id: randomUUID(),
-      routineId: input.webhookId,
-      routineName: input.webhookName,
-      prompt: input.prompt,
-      target: "bot",
-      botId: input.botId,
-      runOn: input.runOn,
-      scheduledFor: input.receivedAt,
-      status: "queued",
-      manual: false,
-      triggerSource: "webhook",
-      webhookId: input.webhookId,
-      deliveryId: input.deliveryId,
-      attachments: [],
-      createdAt: this.now(),
+      id: randomUUID(), routineId: input.webhookId, routineName: input.webhookName, prompt: input.prompt, target: "bot",
+      botId: input.botId, runOn: input.runOn, scheduledFor: input.receivedAt, status: "queued", manual: false,
+      triggerSource: "webhook", webhookId: input.webhookId, deliveryId: input.deliveryId, attachments: [], createdAt: this.now(),
+      ...(input.eventSource ? { eventSource: input.eventSource } : {}),
     };
+    this.commitEvent(run, input.deliveryId, () => { this.runs.push(run); });
+    return cloneRun(run);
+  }
+
+  /** Adds an outside event to its trigger's run that has not started yet, so a burst becomes one run. Null when there
+   *  is no such run or `merge` declines (the run is full). */
+  mergeIntoQueuedRun(webhookId: string, deliveryId: string, merge: (prompt: string) => string | null): { id: string } | null {
+    this.assertWritable();
+    const existing = this.webhookRunReceipt(webhookId, deliveryId);
+    if (existing) return existing;
+    const run = this.runs.findLast((candidate) => candidate.webhookId === webhookId && candidate.status === "queued" && !candidate.threadId);
+    const merged = run?.prompt === undefined ? null : merge(run.prompt);
+    if (!run || merged === null) return null;
+    const before = run.prompt;
+    this.commitEvent(run, deliveryId, () => { run.prompt = merged; }, () => { run.prompt = before; });
+    return { id: run.id };
+  }
+
+  private commitEvent(run: RoutineRun, deliveryId: string, apply: () => void, revert?: () => void): void {
     const previousReceipts = this.webhookRunReceipts;
-    const receipts = previousReceipts.filter((receipt) =>
-      receipt.acceptedAt >= this.now() - WEBHOOK_RETRY_WINDOW_MS);
+    const receipts = previousReceipts.filter((receipt) => receipt.acceptedAt >= this.now() - EVENT_RETRY_WINDOW_MS);
     // Never evict a promised retry identity to admit fresh work.
-    if (receipts.length >= MAX_WEBHOOK_RECEIPTS) {
-      throw Object.assign(new Error("Webhook retry history is full; try again later"), { status: 429 });
-    }
-    receipts.push({ webhookId: input.webhookId, deliveryId: input.deliveryId, runId: run.id, acceptedAt: this.now() });
+    if (receipts.length >= MAX_EVENT_RECEIPTS) throw Object.assign(new Error("Webhook retry history is full; try again later"), { status: 429 });
+    receipts.push({ webhookId: run.webhookId!, deliveryId, runId: run.id, acceptedAt: this.now() });
     const previousRuns = this.runs.slice();
-    this.runs.push(run);
+    apply();
     this.webhookRunReceipts = receipts;
     try { this.save(); }
     catch (error) {
       // Keep the live run objects tick() may be awaiting, not cloned snapshots.
       this.runs = previousRuns;
       this.webhookRunReceipts = previousReceipts;
+      revert?.();
       throw error;
     }
     this.emitRun(run);
     queueMicrotask(() => void this.tick());
-    return cloneRun(run);
   }
 
   activeWebhookRunCount(webhookId: string): number {
@@ -1293,6 +1210,24 @@ export class RoutineManager {
     });
     for (const run of updated) this.emitRun(run);
     return updated.map(cloneRun);
+  }
+
+  /** The computer's clock moved to another time zone (a Cloud took its owner's): a daily or weekly time, or an interval
+   * kept to some days or hours, now falls at another instant. A cron rule names its own zone, a one-time run is an
+   * instant and a plain interval counts elapsed time, so those keep theirs. Returns how many moved. */
+  rescheduleLocalTimes(): number {
+    const now = this.now();
+    const moved = this.routines.filter((routine) => {
+      const local = routine.schedule.type === "daily" || (routine.schedule.type === "interval" && intervalHasRestrictions(routine.schedule));
+      if (!routine.enabled || routine.nextRunAt == null || !local) return false;
+      const next = nextOccurrence(routine.schedule, now);
+      if (next === routine.nextRunAt) return false;
+      routine.nextRunAt = next;
+      return true;
+    });
+    if (moved.length) this.save();
+    for (const routine of moved) this.emitRoutine(routine);
+    return moved.length;
   }
 
   get isTicking(): boolean { return this.ticking; }
@@ -1363,7 +1298,7 @@ export class RoutineManager {
         await this.stopRun(run, `Stopped after reaching the ${run.timeoutMinutes}-minute run limit`, "limit-reached");
       }
       const dueRoutines = this.routines.filter(
-        (routine) => routine.enabled && routine.nextRunAt != null && routine.nextRunAt <= now,
+        (routine) => routine.enabled && routine.nextRunAt != null && routine.nextRunAt <= now && this.targetState(routine) !== "missing",
       );
       // An unanswered wait gives way to its routine's next occurrence, which would otherwise be skipped behind it.
       for (const routine of dueRoutines) {
@@ -1654,7 +1589,7 @@ export class RoutineManager {
     run.finishedAt = this.now();
     this.save();
     this.emitRun(run);
-    this.options.onRunFailed?.(cloneRun(run), alert);
+    this.options.onRunFailed?.(cloneRun(run), alert === undefined && failsLikeLastOutcome(this.runs, run) ? null : alert);
   }
 
   private advancePastOccurrence(routine: Routine, now: number, occurrence: number) {

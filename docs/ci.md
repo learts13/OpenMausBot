@@ -89,7 +89,10 @@ HTTP sign-in, a person's hold, restart and idle close) and
 `server/browser/viewers/viewers.e2e.test.ts` (the page filling the viewer
 at the screen's device scale, resizes, presets, acknowledged frames, a
 scroll ending on a sharp frame, and the phone's v1 live view against its
-golden from agent-browser) and `server/browser/viewers/stream-v2.e2e.test.ts`
+golden from agent-browser), `server/browser/passkey-wall.e2e.test.ts` (a
+sign-in shaped like Google's that stops at a passkey: the bot's notice, and
+the page still usable while the passkey request waits) and
+`server/browser/viewers/stream-v2.e2e.test.ts`
 (the panel's WebSocket stream through its routes: a 1600x1000 panel getting a
 1600x1000 page and 3200x2000 frames on a 2x screen, the page's file picker
 answered by an upload, a dropdown list drawn by the viewer, a download served
@@ -105,7 +108,7 @@ to it, the page's cursor and copied text).
   sandbox helper yet.
 - It is advisory, outside the `CI` gate, until it has run green for a while.
 - Locally: `OMB_CDP_CHROME=<chrome executable> pnpm exec vitest run
-  server/browser/cdp/s4- server/browser/checklist.e2e
+  server/browser/cdp/s4- server/browser/checklist.e2e server/browser/passkey-wall.e2e
   server/browser/viewers/viewers.e2e server/browser/viewers/stream-v2.e2e` (or
   `OMB_CDP_E2E=1` for the installed Google Chrome). Without either the suites
   skip. `OMB_CDP_TEST_TMP` moves the throwaway profiles.

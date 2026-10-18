@@ -1,5 +1,6 @@
 import { approvalCardOutcome } from "./ApprovalCard";
 import type { Bot, Group, InstanceInfo, Message } from "@/state/store";
+import type { RoutineRunCardData } from "../../shared/routine-run";
 import { peerLine } from "@/lib/peer-message";
 import { lastNonReceipt } from "@/lib/receipts";
 import { activityPreview, botEngine } from "@/lib/failed-turn";
@@ -22,10 +23,21 @@ export function botPreview(bot: Bot, visible: Message[], instances: InstanceInfo
   if (last.kind === "activity" && last.tool) return activityPreview(last.tool, botEngine(bot, instances), last.dataResult, advanced);
   if (last.kind === "screen") return t("sidebar.preview.screenFrame");
   if (last.kind === "connector" && last.connector) return sidebarConnectorPreview(last.connector, t);
+  if (last.kind === "routine.run" && last.routineRun) return automationRunPreview(last.routineRun);
   const peer = peerLine(last);
   if (peer) return `${peer.name}: ${plainPreviewText(peer.body)}`;
   if (last.role !== "user" && isClientCancellation(last.text ?? "")) return t("chat.turnStopped");
   return plainPreviewText(citationPreviewText(last.text ?? ""));
+}
+
+const RUN_PREVIEW = {
+  completed: "automations.preview.finished", failed: "automations.preview.failed", waiting: "automations.preview.needsYou",
+  cancelled: "automations.preview.stopped", missed: "automations.preview.missed", running: "automations.preview.running", queued: "automations.preview.running",
+} as const satisfies Record<RoutineRunCardData["status"], string>;
+
+/** "“Morning summary” finished": an automation's run, in the page's words. */
+export function automationRunPreview(run: Pick<RoutineRunCardData, "routineName" | "status">): string {
+  return t(RUN_PREVIEW[run.status], { name: run.routineName });
 }
 
 export function groupPreview(group: Group, bots: Bot[], instances: InstanceInfo[], advanced: boolean): string {

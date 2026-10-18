@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { parse } from "yaml";
+import { cloudHomeConfiguration } from "../server/cloud-home.ts";
+import { cloudHomeChildEnvironments } from "../server/cloud-home-start.ts";
 
 // The published images: the self-hosted server (the default target) and the
 // Cloud home. A pull downloads every layer whose digest changed, and a layer's
@@ -151,6 +153,22 @@ describe("container images", () => {
     expect(last(home, "CMD")).toBe('["node", "/app/dist-server/cloud-home-start.js"]');
     expect(last(home, "HEALTHCHECK")).toContain("http://127.0.0.1:8080/api/health");
     expect(last(chain("runtime"), "ENV")).toMatch(/^AGENT_BROWSER_EXECUTABLE_PATH=\/opt\/openmausbot-browser\/chrome .*NODE_ENV=production$/);
+  });
+
+  it("hands the Cloud home's server every setting the image's ENV gives it", () => {
+    // The root supervisor passes the server an allow-listed environment; a setting the image sets but the list drops is
+    // lost silently (OMB_DUCKDB_DIR was: the server then found neither the 1Password SDK nor DuckDB in /app/duckdb).
+    const image: Record<string, string> = {};
+    for (const step of chain("cloud-home").filter(step => step.op === "ENV")) {
+      for (const [, name, value] of step.args.matchAll(/(?:^|\s)([A-Z][A-Z0-9_]*)=(\S*)/g)) image[name] = value;
+    }
+    expect(image.OMB_DUCKDB_DIR).toBe("/app/duckdb");
+    const contract = { OMB_CLOUD_ROLE: "home", OMB_CLOUD_MACHINE_ID: "3f9c2a4e-8b1d-4c6e-9a7f-2d5e8c1b0a93", OMB_CLOUD_ADMIN_URL: "https://cloud.example.test",
+      OMB_PUBLIC_URL: "https://omb-u-1a2b3c4d5e6f.fly.dev", OMB_CLOUD_BOOTSTRAP_SECRET: "S".repeat(43) };
+    const { server } = cloudHomeChildEnvironments(cloudHomeConfiguration(contract)!, { ...image, ...contract }, "/data");
+    // The launcher sets HOME, the ports and the data folder itself; everything else must come through unchanged.
+    for (const name of Object.keys(image)) expect(server, name).toHaveProperty(name);
+    expect(server.OMB_DUCKDB_DIR).toBe("/app/duckdb");
   });
 
   it("never runs a build step with HOME on the volume, so nothing lands in what a fresh volume starts with", () => {

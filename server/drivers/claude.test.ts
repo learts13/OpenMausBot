@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DATA_DIR, ensureDirs, instanceConfigs, NATIVE_DIR } from "../config.ts";
-import type { ProviderInstance } from "../contracts.ts";
+import { TurnAuthenticationRefusedError, type ProviderInstance } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { BACKGROUND_CALL_TIMEOUT_MS, backgroundCallArgs } from "./claude-background.ts";
 import {
@@ -595,6 +595,38 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await expect.poll(() => {
       try { process.kill(pid, 0); return false; } catch { return true; }
     }, { timeout: 7_000 }).toBe(true);
+  });
+
+  it("reports a synthetic sign-out refusal for recovery only after its process has stopped", async () => {
+    const dump = join(scratch, "recover-signed-out-session.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+    await create("not-logged-in");
+    await expect(instance.adapter.sendTurn({ threadId: "t-auth-recovery", text: "hi", startupRecovery: true }))
+      .rejects.toBeInstanceOf(TurnAuthenticationRefusedError);
+    expect(() => process.kill(dumpedPid(dump), 0)).toThrow();
+    expect(recorder.events.some(event => event.type === "runtime.error" || event.type === "turn.completed")).toBe(false);
+  });
+
+  it("keeps a sign-out after model activity as an ordinary failed turn", async () => {
+    await create("not-logged-in", { FAKE_CLAUDE_AUTH_AFTER_WORK: "1" });
+    await expect(instance.adapter.sendTurn({ threadId: "t-auth-work", text: "hi", startupRecovery: true })).resolves.toHaveProperty("turnId");
+    expect(await recorder.until(event => event.type === "turn.completed"))
+      .toMatchObject({ ok: false, stopReason: "auth_required" });
+    expect(recorder.events.find(event => event.type === "runtime.error"))
+      .toMatchObject({ message: "Not logged in · Please run /login", setup: true });
+  });
+
+  it("recovers a later sign-out in a retained process without counting earlier turns as new work", async () => {
+    const dump = join(scratch, "retained-sign-out.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+    await create("happy", { FAKE_CLAUDE_AUTH_AFTER_TURN: "1" });
+    const turn = { threadId: "t-auth-retained", text: "hi", startupRecovery: true };
+    const first = await instance.adapter.sendTurn(turn);
+    await recorder.until(event => event.type === "turn.completed" && event.turnId === first.turnId);
+    const pid = dumpedPid(dump);
+    await expect(instance.adapter.sendTurn({ ...turn, text: "again" })).rejects.toBeInstanceOf(TurnAuthenticationRefusedError);
+    expect(dumpedPid(dump)).toBe(pid);
+    expect(() => process.kill(pid, 0)).toThrow();
   });
 
   it("settles an outdated CLI as update_required without emitting an assistant reply", async () => {

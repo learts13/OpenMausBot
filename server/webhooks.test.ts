@@ -338,3 +338,73 @@ describe("WebhookManager", () => {
     expect(() => h.manager.receive(webhook.endpointId, secret, { payload: { overflow: true }, eventName: "push" })).toThrow("rate limit");
   });
 });
+
+describe("turning a webhook back on, Run now, and a deleted bot's webhooks", () => {
+  it("turns a paused webhook back on, and Run now works while it is paused, like a schedule's", () => {
+    const h = harness();
+    const { webhook } = create(h.manager);
+    expect(h.manager.update(webhook.id, { enabled: false, verificationPending: false })).toMatchObject({ enabled: false });
+    expect(h.manager.test(webhook.id)).toMatchObject({ runId: "run-1", duplicate: false });
+    expect(h.manager.update(webhook.id, { enabled: true, verificationPending: false })).toMatchObject({ enabled: true });
+  });
+
+  it("removes a deleted bot's webhooks for good, with their calls, and cancels their queued work", () => {
+    const h = harness();
+    const { webhook, secret } = create(h.manager);
+    const other = h.manager.create({ name: "Other", prompt: "Other work", botId: "maus-other" });
+    h.manager.receive(webhook.endpointId, secret, { payload: { lead: "Ada" }, deliveryId: "lead-1" });
+    h.manager.remove(h.manager.create({ name: "Deleted earlier", prompt: "x", botId: "maus-sales" }).webhook.id);
+
+    h.manager.removeForBot("maus-sales");
+
+    expect(h.manager.list().map((trigger) => trigger.id)).toEqual([other.webhook.id]);
+    expect(h.manager.listAttempts()).toEqual([]);
+    expect(h.cancelled).toContainEqual({ id: webhook.id, message: "The assigned MAUS was deleted" });
+    expect(h.emitted).toContainEqual({ kind: "webhook.deleted", webhookId: webhook.id });
+    expect(() => h.manager.receive(webhook.endpointId, secret, { payload: {} })).toThrow("Invalid webhook URL or secret");
+    const saved = JSON.parse(readFileSync(h.file, "utf8"));
+    expect(saved.webhooks.map((trigger: { id: string }) => trigger.id)).toEqual([other.webhook.id]);
+    expect(saved.deleted).toEqual([]);
+  });
+});
+
+describe("wrong-secret calls, counted", () => {
+  const wrong = (manager: WebhookManager, endpointId: string) => manager.recordUnauthorized(endpointId);
+  const refusals = (manager: WebhookManager) => manager.listAttempts().filter((attempt) => attempt.statusCode === 401).map((attempt) => [attempt.receivedAt, attempt.reason]);
+
+  it("never counts an older refusal from before a restart into today's", () => {
+    const h = harness();
+    const { webhook } = create(h.manager);
+    const start = new Date("2026-08-16T10:00:00.000Z").getTime();
+    wrong(h.manager, webhook.endpointId);
+    h.manager.update(webhook.id, { name: "Renamed" });
+    const later = start + 2 * 24 * 60 * 60_000;
+    h.setNow(later);
+    const restarted = new WebhookManager(h.options);
+    wrong(restarted, webhook.endpointId);
+    h.setNow(later + 30_000);
+    wrong(restarted, webhook.endpointId);
+    expect(refusals(restarted)).toEqual([[start, "Invalid webhook URL or secret"], [later + 30_000, "Invalid webhook URL or secret (2 requests)"]]);
+  });
+
+  it("starts a new count after a call that got in, or after a pause, and keeps one burst's count across a restart", () => {
+    const h = harness();
+    const { webhook, secret } = create(h.manager);
+    const start = new Date("2026-08-16T10:00:00.000Z").getTime();
+    wrong(h.manager, webhook.endpointId);
+    h.manager.receive(webhook.endpointId, secret, { payload: {}, deliveryId: "real" });
+    h.setNow(start + 60_000);
+    wrong(h.manager, webhook.endpointId);
+    h.setNow(start + 60 * 60_000);
+    wrong(h.manager, webhook.endpointId);
+    h.manager.update(webhook.id, { name: "Renamed" });
+    h.setNow(start + 61 * 60_000);
+    const restarted = new WebhookManager(h.options);
+    wrong(restarted, webhook.endpointId);
+    expect(refusals(restarted)).toEqual([
+      [start, "Invalid webhook URL or secret"],
+      [start + 60_000, "Invalid webhook URL or secret"],
+      [start + 61 * 60_000, "Invalid webhook URL or secret (2 requests)"],
+    ]);
+  });
+});

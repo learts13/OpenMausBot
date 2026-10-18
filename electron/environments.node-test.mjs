@@ -158,6 +158,39 @@ test("Add a Cloud… sits just under the saved servers only where main offers it
   assert.deepEqual(calls, [["add-cloud"]]);
 });
 
+test("with My Cloud, the switcher says first which side has which bots, and offers the way to bring this computer's over", async () => {
+  const state = { environments: [{ id: "cloud", name: "My Cloud", origin: "https://omb-u-1.fly.dev" }], activeId: "cloud" };
+  const opened = [];
+  const options = await env.placesMenuOptions({ cloud: state.environments[0], activeId: "cloud", platform: "win32", onCopy: () => opened.push("copy"),
+    localBots: async () => ({ bots: [{ name: "Ember" }] }) });
+  const items = env.workspaceMenuTemplate(state, { onSwitch() {}, onConnect() {}, onForget() {}, sublabels: { cloud: "Always on" }, ...options });
+  assert.deepEqual(items.map((item) => item.id ?? item.type), ["workspace-places", "separator", "workspace-local", "workspace-cloud", "workspace-copy-to-cloud", "separator", "workspace-connect", "workspace-forget"]);
+  const places = items.find((item) => item.id === "workspace-places");
+  assert.deepEqual([places.label, places.enabled], ["Your bots live on My Cloud. This computer has its own: Ember.", false]);
+  // Windows and Linux menus show no sublabels: My Cloud's status joins its name rather than vanishing.
+  assert.equal(items.find((item) => item.id === "workspace-cloud").label, "My Cloud · Always on");
+  const copy = items.find((item) => item.id === "workspace-copy-to-cloud");
+  assert.equal(copy.label, "Bring this computer's bots and chats to My Cloud…");
+  copy.click();
+  assert.deepEqual(opened, ["copy"]);
+  const mac = env.workspaceMenuTemplate(state, { onSwitch() {}, onConnect() {}, onForget() {}, sublabels: { cloud: "Always on" },
+    ...await env.placesMenuOptions({ cloud: state.environments[0], activeId: "local", platform: "darwin", onCopy() {}, localBots: async () => ({ bots: [] }) }) });
+  assert.equal(mac.find((item) => item.id === "workspace-cloud").label, "My Cloud");
+  assert.equal(mac.find((item) => item.id === "workspace-cloud").sublabel, "Always on");
+  assert.equal(mac.find((item) => item.id === "workspace-places").label, "This computer has no bots of its own yet. My Cloud has its own.");
+});
+
+test("the places line names this computer's bots briefly, says nothing when its server does not answer, and is absent without a Cloud", async () => {
+  assert.equal(env.placesLine({ onCloud: true, localBots: ["Ember", "Juno"] }), "Your bots live on My Cloud. This computer has its own: Ember and Juno.");
+  assert.equal(env.placesLine({ onCloud: true, localBots: ["Ember", "Juno", "Kit", "Lark"] }), "Your bots live on My Cloud. This computer has its own: Ember, Juno and 2 more.");
+  assert.equal(env.placesLine({ onCloud: false, cloudName: "Studio Cloud", localBots: ["Ember"] }), "These bots live on this computer: Ember. Studio Cloud has its own.");
+  assert.equal(env.placesLine({ onCloud: true, localBots: [] }), "Your bots live on My Cloud. This computer has none of its own.");
+  const quiet = await env.placesMenuOptions({ cloud: { id: "cloud", name: "My Cloud" }, activeId: "cloud", platform: "win32", onCopy() {}, localBots: async () => { throw new Error("timeout"); } });
+  assert.equal("places" in quiet, false);
+  assert.ok(quiet.copyToCloud);
+  assert.deepEqual(await env.placesMenuOptions({ cloud: null, activeId: "local", platform: "win32", onCopy() {}, localBots: async () => ({ bots: [] }) }), { foldSublabels: true });
+});
+
 test("native window identity distinguishes hosted HTML, companion data, and the local workspace", () => {
   const state = { environments: [{ id: "old", name: "Old team", origin: "https://old.example" }], activeId: "old" };
   assert.equal(env.workspaceWindowTitle(state), "OpenMausBot — Hosted: Old team (old.example)");

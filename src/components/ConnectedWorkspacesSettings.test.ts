@@ -10,7 +10,8 @@ vi.mock("react", async original => ({ ...await original<typeof import("react")>(
   useRef: (initial: unknown) => { const index = f.index++; if (!(index in f.values)) f.values[index] = { current: initial }; return f.values[index]; },
   useEffect: (effect: EffectCallback) => { f.effects.push(effect); },
 }));
-vi.mock("@/state/store", () => ({ useStore: () => ({ state: { config: {} }, dispatch: () => {} }) }));
+const config = vi.hoisted(() => ({ value: {} as Record<string, unknown> }));
+vi.mock("@/state/store", () => ({ useStore: () => ({ state: { config: config.value }, dispatch: () => {} }) }));
 import { ConnectedWorkspacesSettings } from "./ConnectedWorkspacesSettings";
 
 type Node = ReactElement<{ children?: ReactNode; onClick?: () => void; "aria-label"?: string;
@@ -46,7 +47,7 @@ beforeEach(() => {
     start: vi.fn(), cancel: vi.fn(), restorePrevious: vi.fn(), bring: vi.fn(), dismiss: vi.fn(), onState: vi.fn(() => () => {}) };
   stub(); setLocale("en");
 });
-afterEach(() => { vi.unstubAllGlobals(); setLocale("en"); });
+afterEach(() => { vi.unstubAllGlobals(); setLocale("en"); config.value = {}; });
 
 it("each server this app added (not this computer) offers Copy this computer here, which opens the copy for that server", async () => {
   await mount();
@@ -222,4 +223,20 @@ it("offers no Forget for the environment this app is on", async () => {
   const { html } = render();
   expect(html).not.toContain('aria-label="Forget Work"');
   expect(html).toContain('aria-label="Forget Old"');
+});
+
+// Two controls over one record let the Cloud switch read off while Computer access lent apps and screen to the same Cloud.
+it("My Cloud's entry has one lending control, Let My Cloud use this computer; other servers keep Computer access", async () => {
+  config.value = { features: { sharedComputers: true } };
+  const open = vi.fn().mockResolvedValue(undefined);
+  const cloud = { id: "cloud", name: "My Cloud", origin: "https://omb-u-1.fly.dev", home: true };
+  stub({ computerSharing: { state: vi.fn() }, cloudLending: { open } });
+  vi.mocked((globalThis.window as unknown as { ogb: { environments: { state: ReturnType<typeof vi.fn> } } }).ogb.environments.state)
+    .mockResolvedValue({ localOrigin: "http://127.0.0.1:1", remote: false, activeId: "local", environments: [VPS, cloud] });
+  await mount();
+  const labels = render().nodes.filter(node => node.type === "button").map(node => node.props["aria-label"] ?? Children.toArray(node.props.children).join(""));
+  expect(labels).toContain("Computer access for VPS");
+  expect(labels).not.toContain("Computer access for My Cloud");
+  render().nodes.find(node => node.type === "button" && Children.toArray(node.props.children).join("") === "Let My Cloud use this computer")!.props.onClick!();
+  expect(open).toHaveBeenCalledOnce();
 });

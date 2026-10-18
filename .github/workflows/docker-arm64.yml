@@ -38,7 +38,7 @@ jobs:
           cache-from: type=gha,scope=omb-arm64
           cache-to: type=gha,mode=max,scope=omb-arm64
       - name: Test native modules, browser, server and proxy authentication
-        run: bash scripts/smoke-arm64-image.sh openmausbot:arm64-test
+        run: bash scripts/smoke-arm64-image.sh openmausbot:arm64-test "$(node -p 'require("./package.json").version')"
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io

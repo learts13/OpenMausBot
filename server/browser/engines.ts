@@ -183,6 +183,8 @@ export class ChromeEngine {
 export interface RuntimeRouterOptions {
   /** What a tool call is told instead of reaching either engine, or null to run it. */
   refusal?(spec: BrowserSpawnSpec, params: unknown): string | null;
+  /** A tool call's answer as the bot gets it, from either engine. */
+  annotate?(spec: BrowserSpawnSpec, result: unknown): unknown;
 }
 
 /** BrowserRuntime's API, each call going to the engine its session runs on. */
@@ -190,18 +192,21 @@ export class RuntimeRouter {
   readonly #old: BrowserRuntime;
   readonly #chrome: ChromeEngine;
   readonly #refusal: RuntimeRouterOptions["refusal"];
+  readonly #annotate: RuntimeRouterOptions["annotate"];
 
   constructor(old: BrowserRuntime, chrome: ChromeEngine, options: RuntimeRouterOptions = {}) {
     this.#old = old;
     this.#chrome = chrome;
     this.#refusal = options.refusal;
+    this.#annotate = options.annotate;
   }
 
-  agentRpc(session: string, spec: BrowserSpawnSpec, method: "tools/list" | "tools/call", params: unknown, beforeDispatch?: () => void, ctx?: StepContext): Promise<unknown> {
+  async agentRpc(session: string, spec: BrowserSpawnSpec, method: "tools/list" | "tools/call", params: unknown, beforeDispatch?: () => void, ctx?: StepContext): Promise<unknown> {
     const refusal = method === "tools/call" ? this.#refusal?.(spec, params) : null;
-    if (refusal) return Promise.resolve({ isError: true, content: [{ type: "text", text: refusal }] });
+    if (refusal) return { isError: true, content: [{ type: "text", text: refusal }] };
     const target = chromeTarget(session, spec);
-    return target ? this.#chrome.service.agentRpc(target, method, params, beforeDispatch) : this.#old.agentRpc(session, spec, method, params, beforeDispatch, ctx);
+    const result = await (target ? this.#chrome.service.agentRpc(target, method, params, beforeDispatch) : this.#old.agentRpc(session, spec, method, params, beforeDispatch, ctx));
+    return method === "tools/call" && this.#annotate ? this.#annotate(spec, result) : result;
   }
 
   previewFrame<T>(session: string, capture: () => Promise<T>, spec: { command: string; args?: readonly string[] }): Promise<T | { png: string; format: "jpeg" }> {

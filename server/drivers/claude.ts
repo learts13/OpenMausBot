@@ -12,6 +12,7 @@ import { writeFileAtomic, writeFileAtomicIfChanged } from "../atomic.ts";
 import { augmentedPath } from "../env-path.ts";
 import { brokerSocketPath, describeSpawnFailure, execCli, killCliTree, spawnCli } from "../procs.ts";
 import { claudeAuthStatus } from "./claude-auth-status.ts";
+import { claudeAuthFailure, claudeAuthRecovery } from "./claude-auth-recovery.ts";
 import { claudeModelExtras } from "./claude-model-extras.ts";
 import { classifyResumeFailure, mayReplay, rebuiltSessionNotice, recoveryPromptFor } from "../resume-recovery.ts";
 import { ClaudeLoginController } from "./claude-login-auth.ts";
@@ -85,16 +86,6 @@ export function resolveClaudeConfigDir(configDir?: string, env: NodeJS.ProcessEn
     throw new Error("claude: configDir must be an absolute path or start with ~/");
   }
   return normalize(expanded);
-}
-
-/** Whether a stream frame is the CLI reporting no login. Only frames the CLI flags as api errors
- * (`error`, `is_api_error_message`) count, so a reply that discusses being logged out never does. */
-export function claudeAuthFailure(
-  frame: { error?: unknown; is_api_error_message?: unknown },
-  text: string,
-): boolean {
-  if (frame.is_api_error_message !== true && typeof frame.error !== "string") return false;
-  return frame.error === "authentication_failed" || classifyError({ text }).reason === "auth";
 }
 
 /** The API refusing a model newer than the installed CLI, relayed as an api-error frame ("Claude
@@ -1026,9 +1017,15 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       });
     };
 
-    const emit = (event: RuntimeEvent) => {
+    const authRecovery = claudeAuthRecovery((event: RuntimeEvent) => {
       for (const l of Array.from(listeners)) l(event);
-    };
+    }, async (threadId) => {
+      const session = sessions.get(threadId);
+      if (!session || !(await killCliTree(session.child))) return false;
+      await session.closed;
+      return sessions.get(threadId) !== session;
+    }, (threadId) => active.has(threadId));
+    const emit = (event: RuntimeEvent) => authRecovery.emit(event);
     const base = (threadId: string, turnId: string) => ({
       eventId: newEventId(),
       provider: DRIVER_KIND,
@@ -1501,6 +1498,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         } catch {
           return;
         }
+        authRecovery.frame(threadId, o, session.costTotal);
         // A replayed stdin message carries its images again: keep their bytes out of the log.
         appendNative(threadId, { dir: "in", source: "claude.sdk.message", msg: o?.type === "user" && o.isReplay === true && o.message ? diagnosticClaudeUserMessage(o) : o });
         if (session.turn?.continuationSilence && !(o.type === "system" && o.subtype === "init") && !(o.type === "user" && o.isReplay === true)) {
@@ -2110,7 +2108,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           localComputerMcp: true,
           hooks: true,
         },
-        sendTurn,
+        sendTurn: (turn) => authRecovery.send(turn, sendTurn),
         steer,
         interruptTurn: async (threadId) => active.get(threadId)?.stop(),
         respondToRequest: async (threadId, requestId, decision) => {

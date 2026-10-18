@@ -60,6 +60,7 @@ function profiles(): Record<string, Record<string, string>> {
     all[`${name}+cloud-home`] = { ...all[name]!, OMB_CLOUD_HOME: "1" };
   }
   all["skills+shared+voice+escalations"] = { ...all["skills+shared+voice"]!, OMB_ESCALATIONS: "1" };
+  all["skills+shared+voice+escalations+x"] = { ...all["skills+shared+voice+escalations"]!, OMB_X_RESEARCH: "1" };
   all["default+legacy-switches"] = { ...all.default!, OMB_ROOM_TURN: "1", OMB_OWN_THREAD_CREATION: "1", OMB_EXTERNAL_RUNTIME: "1" };
   return all;
 }
@@ -68,33 +69,34 @@ const PROFILES = profiles();
 /** Refused by the server to every bot that is not a Chief of Staff. */
 const CHIEF_ONLY_TOOLS = ["create_bot", "list_team_setup", "propose_team_setup", "propose_bot_deletion", "create_room", "manage_room", "retry_thread"];
 /** The profile that mounts the most: its bridged list is checked in whole. */
-const FULL = "skills+shared+voice+escalations";
+const FULL = "skills+shared+voice+escalations+x";
 
 /** Bytes of each bridged list when its budget was last set. A list may not
  * exceed this by more than 2%, and may not undercut it by more than 2%
  * either: lock a saving in by lowering the number. A Chief's list is longer
  * than another bot's only by the Chief-only names in find_tool's description. */
 const BUDGET_BASELINE: Record<string, number> = {
-  "default": 14613,
-  "voice": 15354,
-  "shared": 14653,
-  "shared+voice": 15394,
-  "skills": 14640,
-  "skills+voice": 15381,
-  "skills+shared": 14680,
-  "skills+shared+voice": 15421,
-  "non-chief": 14502,
-  "voice+non-chief": 15243,
-  "shared+non-chief": 14542,
-  "shared+voice+non-chief": 15283,
-  "skills+non-chief": 14529,
-  "skills+voice+non-chief": 15270,
-  "skills+shared+non-chief": 14569,
-  "skills+shared+voice+non-chief": 15310,
-  "skills+shared+voice+cloud-home": 15419,
-  "skills+shared+voice+non-chief+cloud-home": 15308,
-  "skills+shared+voice+escalations": 15667,
-  "default+legacy-switches": 14613,
+  "default": 14912,
+  "voice": 15653,
+  "shared": 14952,
+  "shared+voice": 15693,
+  "skills": 14939,
+  "skills+voice": 15680,
+  "skills+shared": 14979,
+  "skills+shared+voice": 15720,
+  "non-chief": 14801,
+  "voice+non-chief": 15542,
+  "shared+non-chief": 14841,
+  "shared+voice+non-chief": 15582,
+  "skills+non-chief": 14828,
+  "skills+voice+non-chief": 15569,
+  "skills+shared+non-chief": 14868,
+  "skills+shared+voice+non-chief": 15609,
+  "skills+shared+voice+cloud-home": 15718,
+  "skills+shared+voice+non-chief+cloud-home": 15607,
+  "skills+shared+voice+escalations": 15738,
+  "skills+shared+voice+escalations+x": 15832,
+  "default+legacy-switches": 14912,
 };
 
 type RpcAnswer = { id: number; result?: { tools?: unknown[]; content?: Array<{ text: string }>; isError?: boolean }; error?: { code: number; message: string } };

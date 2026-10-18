@@ -53,6 +53,12 @@ export interface TargetSetup {
   interceptFileChooser: boolean;
   /** Tabs hold HTTP authentication challenges for an answer (AuthChallenges) instead of failing them. */
   handleAuth?: boolean;
+  /**
+   * Headless: Chrome's passkey sheet has nowhere to show, yet blocks the tab's input until its request ends (Chrome 155),
+   * so a passkey step froze "Try another way". WebAuthn goes to CDP's virtual environment instead, where a request no
+   * authenticator answers keeps waiting and the page stays usable.
+   */
+  passkeysWithoutSheet?: boolean;
 }
 
 const AUTO_ATTACH = { autoAttach: true, waitForDebuggerOnStart: true, flatten: true };
@@ -72,6 +78,7 @@ export async function setUpDocumentSession(session: CdpSession, setup: TargetSet
   if (setup.identity) calls.push(session.send("Emulation.setUserAgentOverride", { ...setup.identity }));
   if (isPage && setup.focusEmulation) calls.push(session.send("Emulation.setFocusEmulationEnabled", { enabled: true }));
   if (isPage && setup.handleAuth) calls.push(session.send("Fetch.enable", { patterns: AUTH_PATTERNS, handleAuthRequests: true }));
+  if (isPage && setup.passkeysWithoutSheet) calls.push(session.send("WebAuthn.enable", { enableUI: false }));
   calls.push(
     session.send("Page.setInterceptFileChooserDialog", { enabled: setup.interceptFileChooser }),
     session.send("Page.addScriptToEvaluateOnNewDocument", { source: BOOTSTRAP, worldName: WORLD_NAME, runImmediately: true }),

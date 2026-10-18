@@ -88,6 +88,10 @@ export declare function parsePublicOffer(config: unknown): CloudOffer | null;
 export declare function withoutTrial(offer: CloudOffer | null): CloudOffer | null;
 export declare function cloudPlanDisk(state: unknown): CloudPlanDisk | null;
 export declare function rememberedCloudHome(previous: RememberedCloudHome | null, state: unknown): RememberedCloudHome | null;
+export declare function signInCloudSession(input: {
+  origin: string | null; mine: string | null; pair: () => Promise<{ origin: string; code: string }>;
+  fetch: (url: string, init?: RequestInit) => Promise<Response>;
+}): Promise<boolean>;
 export declare function myCloudOrigin(known: {
   account: { homeTarget(): { origin: string } | null; state(): { account?: { id: string } } } | null;
   remembered: RememberedCloudHome | null;

@@ -25,6 +25,7 @@ export interface EnvironmentDescriptor {
     remoteSessions: true;
     /** Only while the maintainer flag `features.sharedComputers` is on; otherwise absent, like a build without the feature. */
     sharedComputers?: true;
+    lendingDetails?: true;
     /** A person's own OMB Cloud home. */
     cloudHome?: true;
     /** Who can update the server: the desktop app that runs it, or the operator. */
@@ -120,7 +121,8 @@ export function environmentDescriptor(input: { environmentId: string; desktopMan
     capabilities: {
       remoteSessions: true,
       // Never advertise a protocol this server would refuse.
-      ...(input.sharedComputers === true ? { sharedComputers: true as const } : {}),
+      // lendingDetails: a lent computer may say its platform, and this server remembers what was lent to it.
+      ...(input.sharedComputers === true ? { sharedComputers: true as const, lendingDetails: true as const } : {}),
       ...(input.cloudHome === true ? { cloudHome: true as const } : {}),
       selfUpdate: input.desktopManaged ? "desktop-managed" : "operator",
       emailSignIn: input.emailSignIn === true,

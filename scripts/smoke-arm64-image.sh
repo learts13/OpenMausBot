@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-image="${1:?Usage: smoke-arm64-image.sh IMAGE}"
+image="${1:?Usage: smoke-arm64-image.sh IMAGE VERSION}"
+version="${2:?Expected app version is required}"
 test "$(docker image inspect -f '{{.Architecture}}' "$image")" = arm64
 fixture="omb-arm64-smoke-$$"
 edge="$fixture-edge"
@@ -26,6 +27,23 @@ for attempt in $(seq 1 60); do
 done
 docker exec "$fixture" curl -sf http://127.0.0.1:8799/ | grep -qi '<html'
 test "$(docker exec "$fixture" id -un)" = maus
+
+docker exec -i -e EXPECTED_VERSION="$version" "$fixture" node --input-type=module <<'JS'
+import assert from 'node:assert/strict';
+const response = await fetch('http://127.0.0.1:8799/.well-known/openmausbot/environment');
+assert.equal(response.status, 200);
+const environment = await response.json();
+assert.equal(environment.version, process.env.EXPECTED_VERSION);
+assert.match(environment.version, /^\d+\.\d+\.\d+$/);
+const { createUpdateChecker } = await import('/app/dist-server/server/update-check.js');
+const check = createUpdateChecker({
+  current: environment.version,
+  install: 'docker',
+  fetch: async () => Response.json({ tag_name: 'v999.0.0' }),
+});
+assert.equal((await check()).available, true);
+console.log(`Server reports ${environment.version} and detects a newer release`);
+JS
 
 docker exec -i "$fixture" node --input-type=module <<'JS'
 import assert from 'node:assert/strict';

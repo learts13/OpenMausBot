@@ -123,6 +123,8 @@ const __APP_VERSION__: string;
       /** The Cloud's setup checklist: shows the lending switch in this app's
        * own Settings → OMB Cloud (leaving the Cloud's page). */
       cloudLending?: { open(): Promise<void> };
+      /** This computer's Settings → Logins only: what of Logins My Cloud has, and Also use on My Cloud. */
+      cloudLogins?: import("../../electron/cloud-logins.mjs").CloudLoginsBridge;
       /** Settings on the person's own Cloud: the plan, read only. */
       cloudPlan?: import("../../electron/cloud-account.mjs").CloudPlanBridge;
       desktopNotices?: import("../../electron/desktop-prefs.mjs").DesktopNoticesBridge;
@@ -162,6 +164,8 @@ const __APP_VERSION__: string;
             missing?: boolean;
             /** One of the six Cloud colours (environments.cjs ENTRY_COLORS). */
             color?: string;
+            /** The person's own My Cloud. */
+            home?: boolean;
           }>;
         }>;
         /** Local targets answer {ok, error?} (error strings are an open set); remote ones answer nothing. */
@@ -331,9 +335,11 @@ const __APP_VERSION__: string;
       /** Points this computer's file manager at a file a bot linked outside
        * its workspace, without opening or reading it. Local app only. */
       revealInFolder?(filePath: string): Promise<"shown" | "missing" | "invalid">;
+      /** Opens this app's logs folder in Explorer or Finder and says where it is. */
+      openLogsFolder?(): Promise<{ folder: string; opened: boolean; error?: string }>;
       /** Save a provider credential through Electron's OS-backed store. */
       setCredential?(
-        name: "composioApiKey" | "xaiApiKey" | "boxToken" | "opencodeGoApiKey" | "ttsKey" | "fishAudioKey" | "jevApiKey" | "openrouterDeciderKey" | "openaiImageApiKey" | "customImageApiKey" | "openaiLiveKey",
+        name: "composioApiKey" | "xaiApiKey" | "boxToken" | "opencodeGoApiKey" | "ttsKey" | "fishAudioKey" | "jevApiKey" | "openrouterDeciderKey" | "openaiImageApiKey" | "customImageApiKey" | "openaiLiveKey" | "tregApiKey",
         value: string,
       ): Promise<ConfigStatus>;
       /** In-app auto-update (packaged app only; dormant in dev). Updates

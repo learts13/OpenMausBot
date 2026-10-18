@@ -13,6 +13,7 @@ import { DATA_DIR, NATIVE_DIR } from "../config.ts";
 import { ChatGptPlanAuthController } from "./chatgpt-plan-auth.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { CodexDriver, codexNativeIncomingLogMessage, codexUpdateCommand } from "./codex.ts";
+import { codexCliOverrides } from "./codex-process.ts";
 import { CODEX_SIGN_IN_EXPIRED, codexNotSignedIn, codexSignInRefused, codexUserError } from "./codex-errors.ts";
 import { CODEX_USAGE_LIMIT_REACHED } from "../../shared/codex-usage-limit.ts";
 import { removeTempDir } from "../testing/cleanup.ts";
@@ -125,7 +126,7 @@ describe("CodexDriver turns (fake app-server)", () => {
   let scratch: string;
 
   const create = async (
-    opts: { mode?: string; fullAuto?: boolean; environment?: Record<string, string>; managed?: boolean; authMode?: "chatgpt-plan" } = {},
+    opts: { mode?: string; fullAuto?: boolean; environment?: Record<string, string>; managed?: boolean; authMode?: "chatgpt-plan"; cli?: string } = {},
   ) => {
     if (opts.mode) process.env.FAKE_CODEX_MODE = opts.mode;
     instance = await CodexDriver.create({
@@ -137,7 +138,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       },
       enabled: true,
       config: {
-        cli: FAKE_CLI,
+        cli: opts.cli ?? FAKE_CLI,
         fullAuto: opts.fullAuto ?? false,
         ...(opts.authMode ? { authMode: opts.authMode } : {}),
         ...(opts.managed ? { managed: { url: "http://127.0.0.1:1/v1", models: ["company-codex-model"] } } : {}),
@@ -2944,6 +2945,33 @@ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n');});`)
     writeFileSync(updatedFile, "");
     expect((await instance.snapshot()).version).toBe("codex-cli 0.162.1");
     expect(instance.models.options.map((model) => model.id)).toContain("gpt-6.1-sol");
+  });
+
+  it("passes -c overrides from the CLI setting after app-server, before its own", async () => {
+    const dump = join(scratch, "cli-overrides.json"); process.env.FAKE_CODEX_DUMP = dump;
+    await create({
+      cli: `${FAKE_CLI} -c 'skills.config=[{name="docs",enabled=false}]' --config=model_verbosity=low`,
+      environment: { HOME: scratch, CODEX_HOME: join(scratch, ".codex") },
+    });
+    await instance.adapter.sendTurn({ threadId: "cli-overrides", text: "Fixture" });
+    await recorder.until((event) => event.type === "turn.completed");
+    const { argv } = JSON.parse(readFileSync(dump, "utf8")) as { argv: string[] };
+    expect(argv.slice(0, 5)).toEqual(["app-server", "-c", 'skills.config=[{name="docs",enabled=false}]', "-c", "model_verbosity=low"]);
+    // The driver's own overrides still come later, so they keep the last word.
+    expect(argv.indexOf("features.computer_use=false")).toBeGreaterThan(4);
+  });
+
+  it("splits Codex config overrides from the rest of the CLI setting", () => {
+    expect(codexCliOverrides("codex")).toEqual({ cli: "codex", overrides: [] });
+    expect(codexCliOverrides("npx -y @openai/codex")).toEqual({ cli: "npx -y @openai/codex", overrides: [] });
+    expect(codexCliOverrides("codex -c a.b=1 --config c=2 --config=d=x -p work")).toEqual({
+      cli: "codex -p work", overrides: ["-c", "a.b=1", "-c", "c=2", "-c", "d=x"],
+    });
+    expect(codexCliOverrides("'/Applications/My Codex/codex' -c a=1")).toEqual({
+      cli: '"/Applications/My Codex/codex"', overrides: ["-c", "a=1"],
+    });
+    // Not a key=value override (npx's own -c), so it stays with the launcher.
+    expect(codexCliOverrides("npx -c 'codex'")).toEqual({ cli: "npx -c 'codex'", overrides: [] });
   });
 
   it("updates the selected Codex executable instead of installing a second copy", () => {

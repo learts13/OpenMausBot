@@ -3,6 +3,7 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { t } from "@/lib/i18n";
 import type { Bot } from "@/state/store";
 import { BROWSER_HELD_ELSEWHERE } from "../../shared/browser-held";
 
@@ -307,5 +308,52 @@ describe("what the person does in the panel", () => {
     await act(async () => socket.control("you"));
     await flush();
     expect(socket.sent.at(-1)).toEqual({ type: "navigate", url: "https://accounts.example.com/login" });
+  });
+});
+
+describe("a sign-in that stops at a passkey", () => {
+  const PASSKEY = "https://accounts.google.com/v3/signin/challenge/pk/presend?TL=fixture";
+  const notice = () => host.querySelector("section[role=status]");
+  const go = async (socket: FakeSocket, url: string) => {
+    await act(async () => socket.message({ type: "nav", tabId: "t1", url, loading: false, canGoBack: true, canGoForward: false }));
+    await flush();
+  };
+
+  it("explains the passkey step and the ways that work, and goes once the page moves on", async () => {
+    const socket = await streaming("you");
+    expect(notice()).toBeNull();
+    await go(socket, PASSKEY);
+    expect(notice()?.textContent).toContain(t("browser.passkey.title"));
+    expect(notice()?.textContent).toContain(t("browser.passkey.body", { provider: "Google" }));
+    expect(notice()?.textContent).toContain(t("browser.passkey.appsGoogle", { name: "Pepper" }));
+    expect(notice()?.textContent).toContain(t("browser.passkey.otherWayGoogle"));
+    expect(notice()?.querySelectorAll("li")).toHaveLength(2);
+    await go(socket, "https://accounts.google.com/v3/signin/challenge/pwd?TL=fixture");
+    expect(notice()).toBeNull();
+  });
+
+  it("stays dismissed on that step only", async () => {
+    const socket = await streaming("you");
+    await go(socket, PASSKEY);
+    await act(async () => button(t("browser.passkey.dismiss")).click());
+    expect(notice()).toBeNull();
+    await go(socket, "https://accounts.google.com/v3/signin/identifier");
+    await go(socket, `${PASSKEY}&again=1`);
+    expect(notice()).not.toBeNull();
+  });
+
+  it("on My Cloud, offers the lent PC by name, or how to lend one", async () => {
+    fixture.state.config.cloudHome = true;
+    fixture.api.mockImplementation(async (path: string) => path === "/api/shared-computers"
+      ? { computers: [{ name: "Office PC", online: true, scopes: { screen: true } }] } : { ok: true });
+    const socket = await streaming("you");
+    await go(socket, PASSKEY);
+    expect(notice()?.textContent).toContain(t("browser.passkey.lentPc", { computer: "Office PC", name: "Pepper" }));
+    act(() => root.unmount());
+    root = createRoot(host);
+    fixture.api.mockImplementation(async (path: string) => path === "/api/shared-computers" ? { computers: [{ name: "Office PC", online: false, scopes: { screen: true } }] } : { ok: true });
+    const again = await streaming("you");
+    await go(again, PASSKEY);
+    expect(notice()?.textContent).toContain(t("browser.passkey.lendPc", { name: "Pepper" }));
   });
 });

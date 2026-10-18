@@ -40,7 +40,7 @@ vi.mock("./DesktopCapabilities", async (importOriginal) => ({
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
 const { initialState } = await import("@/state/store");
-const { EventDetails, EventEditor } = await import("./RoutineCalendarPage");
+const { EventDetails, EventEditor, RoutineEditor } = await import("./RoutineCalendarPage");
 const { TriggersPage: RoutinesPage } = await import("./TriggersPage");
 const { scheduleLabel } = await import("@/lib/schedule-label");
 
@@ -136,7 +136,7 @@ describe("Automations page", () => {
   it("lists each automation as one sentence with a plain status line and a switch", () => {
     const html = markup(createElement(RoutinesPage, { onBack: vi.fn(), onOpenRoom: vi.fn() }));
     expect(html).toContain("Every day at 6:30 AM, Runner summarises my inbox and calendar".replace("my inbox", "your inbox"));
-    expect(html).toMatch(/Working · last ran [^<]+ · next [^<]+/);
+    expect(html).toMatch(/Working · last ran [^<]+ · next: [^<]+/);
     expect(html).not.toMatch(/Latest: |Not run yet|runs OK this week|Run logs/);
   });
 
@@ -176,8 +176,34 @@ describe("Automations page", () => {
     expect(page().some((node) => node.props["aria-label"] === "All bots")).toBe(true);
   });
 
+  it("starts Set it up yourself with the bot the New box would have asked, else the only bot, so Save is not dead", () => {
+    click(buttons(page()).get("New"));
+    (page().find(named("NewAutomation"))!.props.onSetUpYourself as (kind: string, botId: string) => void)("schedule", bot.id);
+    const editor = page().find(named("RoutineEditor"))!;
+    expect(editor.props.initialBotId).toBe(bot.id);
+    const chosen = (props: Record<string, unknown>) => (RoutineEditor(props as never) as ReactElement<{ seed: { botIds: string[] } }>).props.seed.botIds;
+    const other = { ...bot, id: "other", name: "Other" };
+    expect(chosen(editor.props)).toEqual([bot.id]);
+    expect(chosen({ ...editor.props, initialBotId: "other", bots: [bot, other] })).toEqual(["other"]);
+    expect(chosen({ ...editor.props, initialBotId: undefined })).toEqual([bot.id]);
+    expect(chosen({ ...editor.props, initialBotId: undefined, bots: [bot, other] })).toEqual([]);
+  });
+
+  it("starts the webhook editor with the bot the New box would have asked too", async () => {
+    const { WebhookEditor } = await import("./WebhookTrigger");
+    click(buttons(page()).get("New"));
+    (page().find(named("NewAutomation"))!.props.onSetUpYourself as (kind: string, botId: string) => void)("webhook", bot.id);
+    expect(page().find(named("WebhookEditor"))!.props.initialBotId).toBe(bot.id);
+    const other = { ...bot, id: "other", name: "Other" };
+    fixture.values = [];
+    const tree = capture(() => WebhookEditor({ bots: [bot, other], initialBotId: "other", onClose: vi.fn(), onCredential: vi.fn() }));
+    const picked = tree.filter((node) => node.type === "button" && String(node.props.className).includes("border-accent/70")).map((node) => textOf(node.props.children));
+    expect(picked).toContain("Other");
+    expect(picked).not.toContain(bot.name);
+  });
+
   it("greets an empty list, and its example fills the New box", () => {
-    fixture.state = { ...fixture.state!, routines: [], webhooks: [], routineRuns: [], routinesLoadState: "ready" };
+    fixture.state = { ...fixture.state!, hydrated: true, routines: [], webhooks: [], routineRuns: [], routinesLoadState: "ready" };
     const html = markup(createElement(RoutinesPage, { onBack: vi.fn(), onOpenRoom: vi.fn() }));
     expect(html).toContain("Your bots can do things on their own.");
     expect(html).toContain("Try: every morning, summarize my inbox");
@@ -254,6 +280,8 @@ describe("routine editor", () => {
     }
     expect(html).toContain('aria-expanded="false"');
     for (const text of hidden) expect(html, text).not.toContain(text);
+    expect(html).toMatch(/>Save<\/button>/);
+    expect(html).not.toMatch(/routine<\/button>/i);
   });
 
   it("marks the routine's repeat choice", () => {
@@ -308,6 +336,22 @@ describe("routine editor", () => {
     click(buttons(tree).get("Save"));
     const [, off] = fixture.api.mock.calls.at(-1) as unknown as [string, { body: string }];
     expect(JSON.parse(off.body)).toMatchObject({ continuity: false });
+  });
+
+  it("turns a one-time routine that already happened back on when it is saved with a new time, and leaves any other's switch alone", async () => {
+    const save = async (saved: Routine) => {
+      fixture.values = [];
+      const props = { seed: { kind: "routine" as const, at: Date.now() + 3_600_000, durationMinutes: 30, botIds: [bot.id], routine: saved }, bots: [bot], onClose: vi.fn(), onSavedCall: vi.fn() };
+      click(buttons(capture(() => EventEditor(props))).get("Save"));
+      await vi.waitFor(() => expect(fixture.api).toHaveBeenCalled());
+      const [, init] = fixture.api.mock.calls.at(-1) as unknown as [string, { body: string }];
+      fixture.api.mockClear();
+      return JSON.parse(init.body);
+    };
+    const once = { ...routine, schedule: { type: "once" as const, at: Date.now() - 3_600_000 }, nextRunAt: null };
+    expect(await save({ ...once, enabled: false })).toMatchObject({ enabled: true });
+    expect(await save({ ...once, enabled: false, schedule: { type: "once", at: Date.now() + 7_200_000 } })).not.toHaveProperty("enabled");
+    expect(await save({ ...routine, enabled: false })).not.toHaveProperty("enabled");
   });
 
   it("shows a routine with no thread of its own reporting into the bot's main thread", () => {

@@ -1,5 +1,6 @@
 import { loginPageCheck, loginPlace, loginSite, type LoginPlace } from "../shared/logins.ts";
 import type { FillCandidate } from "./login-fill.ts";
+import { receiveLoginHandoff, type LoginHandoffResult } from "./login-handoff.ts";
 import type { LoginStore } from "./login-store.ts";
 import type { OnePasswordLogins } from "./onepassword.ts";
 import type { LoginRouteDeps } from "./routes/logins.ts";
@@ -50,6 +51,11 @@ export class BotLogins {
     this.onePassword = onePassword;
   }
 
+  /** The desktop main process's private ask for one login, for "Also use on My Cloud" (login-handoff.ts). */
+  receiveHandoff(message: unknown, post: (reply: LoginHandoffResult) => boolean): boolean {
+    return receiveLoginHandoff(message, this.store, post);
+  }
+
   /** Where each login the bot may use fills, with its username. */
   sitesFor(botId: string): Array<LoginPlace & { username: string }> {
     return [...this.store.sitesFor(botId), ...this.onePassword.sitesFor(botId)];
@@ -70,6 +76,11 @@ export class BotLogins {
   markUsed(id: string): void {
     this.store.markUsed(id);
     this.onePassword.markUsed(id);
+  }
+
+  /** The settings, plus whether a 1Password token is held: what a credential card's "configured" check reads. */
+  credentialConfig<T extends object>(config: T): T & { onePassword: { connected: boolean } } {
+    return { ...config, onePassword: { connected: Boolean(this.store.onePasswordToken()) } };
   }
 
   routes(botExists: (id: string) => boolean): LoginRouteDeps {

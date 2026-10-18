@@ -23,7 +23,7 @@ import { SidebarPopoverMenu, type SidebarMenuItem } from "./SidebarPopoverMenu";
 import { ShortcutHint } from "./ShortcutHint";
 import { useSidebarPhoneStatus } from "./SidebarPhoneButton";
 import { api, useStore, type Action } from "@/state/store";
-import { serverUpdateRow, type ServerUpdateCheck, type ServerUpdatePhase } from "@/lib/server-update";
+import { serverCheckPhase, serverUpdateRow, type ServerUpdateCheck, type ServerUpdatePhase } from "@/lib/server-update";
 import type { CloudAccountBridge, CloudAccountState } from "../../electron/cloud-account.mjs";
 import { useUpdaterState, type UpdaterState } from "@/lib/updater";
 import { brand } from "../lib/brand";
@@ -64,7 +64,9 @@ export type UpdatePhase =
   | UpdaterState["status"]
   | "up-to-date"
   // only a self-hosted server's check reports a release it cannot install itself
-  | "available";
+  | "available"
+  // or that it already runs a newer version than this page
+  | "reload";
 
 export function updatePhase(state: UpdaterState | null, upToDate: boolean): UpdatePhase {
   const status = state?.status ?? "idle";
@@ -200,15 +202,16 @@ function useServerUpdateItem(enabled: boolean): UpdateEntry | null {
       icon: <UpdateIcon phase={phase} pending={false} />,
       disabled: phase === "checking",
       keepOpen: true,
-      attention: phase === "available" || phase === "error",
+      attention: phase === "available" || phase === "reload" || phase === "error",
       attentionTone: phase === "error" ? "danger" : "accent",
       onSelect: () => {
         if (phase === "available" && check?.releaseUrl) return void openExternalLink(check.releaseUrl);
+        if (phase === "reload") return window.location.reload();
         setPhase("checking");
         void api<ServerUpdateCheck>("/api/updates/check", { timeoutMs: 20_000 })
           .then((next) => {
             setCheck(next);
-            setPhase(next.available ? "available" : "up-to-date");
+            setPhase(serverCheckPhase(next));
           })
           .catch(() => setPhase("error"));
       },

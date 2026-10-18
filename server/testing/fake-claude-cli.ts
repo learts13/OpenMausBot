@@ -3,7 +3,7 @@
 //   FAKE_CLAUDE_MODE  happy (default) | exit-early | hang | malformed | dead-session (fails on --resume)
 //     | stale-session (--resume answers 2.1.295's no-session error result, no init, stays up)
 //     | error-result | resume-dies-after-init | stream (partial deltas plus subagent noise)
-//     | not-logged-in (2.1.263's frames) | api-error | usage-limit (2.1.295's usage_limit_reached frames)
+//     | not-logged-in (2.1.296's frames) | api-error | usage-limit (2.1.295's usage_limit_reached frames)
 //   FAKE_CLAUDE_API_ERROR  text for the api-error frame (default: overloaded)
 //   FAKE_CLAUDE_API_ERROR_KIND  the api-error frame's `error` (default: unknown); FAKE_CLAUDE_API_ERROR_STATUS its result's
 //     api_error_status; FAKE_CLAUDE_NO_TERMINAL_REASON=1: the result has no terminal_reason, only stop_reason "stop_sequence"
@@ -12,6 +12,8 @@
 //   FAKE_CLAUDE_RELEASE  with hang: the turn ends normally once this file exists
 //   FAKE_CLAUDE_DUMP  path for the latest turn's {argv, env, cwd, prompt, systemPrompt, mcpConfig}
 //   FAKE_CLAUDE_EXIT_AFTER_TURN  1: exit once the turn is answered, so later turns relaunch with --resume
+//   FAKE_CLAUDE_AUTH_AFTER_TURN  1: from the second turn, answer as not-logged-in; FAKE_CLAUDE_AUTH_AFTER_WORK  1: not-logged-in
+//     calls a tool first
 //   FAKE_CLAUDE_GONE_AFTER_TURN  path: after the turn stop reading stdin, write <path>.closed, exit once <path> exists
 //   FAKE_CLAUDE_TEXT_FILE  path of the one-shot text reply; missing or exactly __FAIL__ fails the call
 //   FAKE_CLAUDE_TEXT_ROUTES  path of {"marker": "reply"}: the first marker a one-shot prompt contains picks the reply
@@ -702,8 +704,12 @@ const playTurn = (prompt: JsonValue, late = false) => {
     process.stdout.write("this is not json\n{broken\n");
   }
 
-  // A signed-out CLI's frames, verbatim: only the frame's own error fields mark the failure.
-  if (mode === "not-logged-in") {
+  // A signed-out CLI's frames, as Claude Code 2.1.296 sends them: only the frame's own error fields mark the failure.
+  if (mode === "not-logged-in" || process.env.FAKE_CLAUDE_AUTH_AFTER_TURN === "1" && turnsPlayed > 0) {
+    if (process.env.FAKE_CLAUDE_AUTH_AFTER_WORK === "1") out({
+      type: "assistant", message: { model: "claude-fixture", content: [{ type: "tool_use", id: "before-sign-out", name: "Bash", input: { command: "pwd" } }] },
+    });
+    out({ type: "system", subtype: "status", status: "requesting" });
     out({
       type: "assistant",
       message: { model: "<synthetic>", content: [{ type: "text", text: "Not logged in \u00b7 Please run /login" }] },
@@ -716,6 +722,7 @@ const playTurn = (prompt: JsonValue, late = false) => {
       stop_reason: "stop_sequence",
       terminal_reason: "api_error",
       result: "Not logged in \u00b7 Please run /login",
+      total_cost_usd: runningCost.total,
     });
     turnRunning = false;
     finishIfDone();

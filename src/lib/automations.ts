@@ -4,10 +4,12 @@ import { cronScheduleLabel } from "../../shared/cron-label";
 import { activeLocale, t } from "@/lib/i18n";
 import type { LocaleKey } from "@/locales";
 import type { Routine, RoutineRun, RoutineSchedule } from "@/lib/routines";
-import type { WebhookTrigger } from "@/lib/webhooks";
+import type { WebhookAttempt, WebhookTrigger } from "@/lib/webhooks";
+import type { AppTrigger } from "@/lib/app-triggers";
+import { appProblem, appStatusParts, appWhen, skippedToday } from "@/lib/app-automations";
 import type { OptionCardData } from "@/state/store";
 
-export type AutomationKind = "schedule" | "webhook";
+export type AutomationKind = "schedule" | "webhook" | "app";
 
 export interface Automation {
   kind: AutomationKind;
@@ -18,6 +20,8 @@ export interface Automation {
   enabled: boolean;
   schedule?: RoutineSchedule;
   eventTypes?: string[];
+  /** kind "app": what it watches, its problem and what it skipped. */
+  appTrigger?: AppTrigger;
   nextRunAt: number | null;
   /** This automation's runs, newest first. */
   runs: RoutineRun[];
@@ -26,8 +30,10 @@ export interface Automation {
 const runTime = (run: RoutineRun) => run.startedAt ?? run.scheduledFor ?? run.createdAt;
 const newestFirst = (left: RoutineRun, right: RoutineRun) => runTime(right) - runTime(left);
 
-export function automationsFrom(sources: { routines: readonly Routine[]; webhooks: readonly WebhookTrigger[]; runs: readonly RoutineRun[] }): Automation[] {
+/** With `bots`, an automation whose bot no longer exists is left out: it can never run, so it is never shown. */
+export function automationsFrom(sources: { routines: readonly Routine[]; webhooks: readonly WebhookTrigger[]; appTriggers?: readonly AppTrigger[]; runs: readonly RoutineRun[]; bots?: readonly { id: string }[] }): Automation[] {
   const runsOf = (id: string) => sources.runs.filter((run) => run.routineId === id).sort(newestFirst);
+  const botIds = sources.bots && new Set(sources.bots.map((bot) => bot.id));
   return [
     ...sources.routines.map((routine): Automation => ({
       kind: "schedule", id: routine.id, name: routine.name, botId: routine.botId, instructions: routine.prompt, enabled: routine.enabled,
@@ -37,14 +43,20 @@ export function automationsFrom(sources: { routines: readonly Routine[]; webhook
       kind: "webhook", id: webhook.id, name: webhook.name, botId: webhook.botId, instructions: webhook.prompt, enabled: webhook.enabled,
       eventTypes: webhook.eventTypes, nextRunAt: null, runs: runsOf(webhook.id),
     })),
-  ];
+    ...(sources.appTriggers ?? []).map((trigger): Automation => ({
+      kind: "app", id: trigger.id, name: trigger.name, botId: trigger.botId, instructions: trigger.prompt, enabled: trigger.enabled,
+      appTrigger: trigger, nextRunAt: null, runs: runsOf(trigger.id),
+    })),
+  ].filter((automation) => !botIds || botIds.has(automation.botId));
 }
 
 export function automationFor(ref: { kind: AutomationKind; id: string }, sources: Parameters<typeof automationsFrom>[0]): Automation | null {
   return automationsFrom({
     routines: ref.kind === "schedule" ? sources.routines.filter((routine) => routine.id === ref.id) : [],
     webhooks: ref.kind === "webhook" ? sources.webhooks.filter((webhook) => webhook.id === ref.id) : [],
+    appTriggers: ref.kind === "app" ? (sources.appTriggers ?? []).filter((trigger) => trigger.id === ref.id) : [],
     runs: sources.runs,
+    bots: sources.bots,
   })[0] ?? null;
 }
 
@@ -55,6 +67,8 @@ export function cardAutomation(card: OptionCardData): { kind: AutomationKind; id
   if (routine?.operation.action === "create" && routine.resultId) return { kind: "schedule", id: routine.resultId };
   const webhook = card.webhookRequest;
   if (webhook?.operation.action === "create" && webhook.resultId) return { kind: "webhook", id: webhook.resultId };
+  const app = card.appTriggerRequest;
+  if (app?.operation.action === "create" && app.resultId) return { kind: "app", id: app.resultId };
   return null;
 }
 
@@ -88,7 +102,7 @@ export function nextWhen(at: number, now = Date.now()): string {
   return new Date(at).toLocaleDateString(locale(), { month: "short", day: "numeric" });
 }
 
-const capital = (text: string) => text.charAt(0).toLocaleUpperCase(locale()) + text.slice(1);
+export const capital = (text: string) => text.charAt(0).toLocaleUpperCase(locale()) + text.slice(1);
 
 // ---- The sentence ----
 
@@ -106,6 +120,9 @@ export function plainWhen(schedule: RoutineSchedule): string {
     return t("automations.when.once", { date: new Date(schedule.at).toLocaleDateString(locale(), { weekday: "long", month: "long", day: "numeric" }), time: clock(schedule.at, true) });
   }
   if (schedule.type === "cron") {
+    // "Every 2 minutes" is a cron step: an interval runs at most every 5 minutes, so a bot asked for less writes this.
+    const minutes = /^\*\/([1-5]?\d) \* \* \* \*$/.exec(schedule.expression.trim())?.[1];
+    if (minutes && Number(minutes) >= 2) return t("automations.when.everyMinutes", { count: Number(minutes) });
     const label = cronScheduleLabel(schedule);
     return label.startsWith("Cron ") ? t("automations.when.custom") : label;
   }
@@ -139,18 +156,25 @@ function thirdPerson(verb: string): string {
   return `${lower}s`;
 }
 
+/** "SMS the team", "CRM: …", "HubSpot deals…": a capital after a word's first letter makes it a name, never a verb, and
+ * it keeps its case ("e2E-…" and "smses the team" otherwise). */
+const keepsCase = (word: string) => /\p{Lu}/u.test(word.slice(1));
+
 /** What the bot does, as a short phrase: the first clause of its instructions, addressed to the person. */
+/** Words a bot may leave at the end of its instructions that a person never says: "…a reply to the email in the event data". */
+const TECHNICAL_TAIL = /\s+(?:in|from|of|inside)\s+(?:the\s+)?(?:(?:incoming|webhook|trigger|app)\s+)?(?:event(?:'s)?(?:\s+(?:data|payload|body))?|payload|webhook(?:\s+(?:data|body|payload|call))?|trigger(?:\s+(?:data|payload))?)$/i;
+
 export function doesPhrase(instructions: string, english = activeLocale().startsWith("en")): string {
-  let clause = instructions.replace(/^\s*please\s+/i, "").split(/[.:;!?\n]|\s[—–-]\s/)[0]?.trim() ?? "";
+  let clause = instructions.replace(/^\s*please\s+/i, "").split(/[.:;!?\n]|\s[—–-]\s/)[0]?.trim().replace(TECHNICAL_TAIL, "") ?? "";
   if (!clause) return t("automations.does.default");
   if (english) {
     clause = clause.replace(/\bme\b/gi, "you").replace(/\bmy\b/gi, "your").replace(/\bmine\b/gi, "yours").replace(/\bI\b/g, "you");
     const [first = "", ...rest] = clause.split(/\s+/);
-    clause = /^[A-Za-z]+$/.test(first) && !NOT_A_VERB.has(first.toLowerCase())
+    clause = keepsCase(first) ? clause : /^[A-Za-z]+$/.test(first) && !NOT_A_VERB.has(first.toLowerCase())
       // "Summarize the inbox and post the top three" → "summarizes the inbox and posts the top three".
       ? [thirdPerson(first), ...rest].join(" ").replace(new RegExp(`\\b(and|then) (${COMMON_VERBS})\\b`, "g"), (_match, joiner: string, verb: string) => `${joiner} ${thirdPerson(verb)}`)
       : clause.charAt(0).toLowerCase() + clause.slice(1);
-  } else {
+  } else if (!keepsCase(clause.split(/\s/)[0] ?? "")) {
     clause = clause.charAt(0).toLocaleLowerCase(locale()) + clause.slice(1);
   }
   if (clause.length <= PHRASE_CHARS) return clause;
@@ -174,8 +198,9 @@ export function sourcePhrase(name: string): string {
 }
 
 /** "Every weekday at 9 AM, Scout sends you a summary of your inbox"; "When your sales form sends something, Scout drafts…". */
-export function automationSentence(automation: Pick<Automation, "kind" | "name" | "instructions" | "schedule">, botName: string): string {
+export function automationSentence(automation: Pick<Automation, "kind" | "name" | "instructions" | "schedule" | "appTrigger">, botName: string): string {
   const does = doesPhrase(automation.instructions);
+  if (automation.kind === "app" && automation.appTrigger) return t("automations.sentence.appEvent", { when: appWhen(automation.appTrigger), bot: botName, does });
   if (automation.kind === "schedule" && automation.schedule) {
     return t("automations.sentence.schedule", { when: plainWhen(automation.schedule), bot: botName, does });
   }
@@ -184,9 +209,10 @@ export function automationSentence(automation: Pick<Automation, "kind" | "name" 
 
 // ---- Status: Working / Paused / Needs you ----
 
-export type AutomationFix = "answer" | "sign-in" | "usage" | "edit" | "run";
+export type AutomationFix = "answer" | "sign-in" | "usage" | "edit" | "run" | "reconnect";
 export interface AutomationStatus {
-  state: "working" | "paused" | "needs-you";
+  /** Done: a one-time automation whose time has passed. It has nothing left to turn on; Edit gives it a new time. */
+  state: "working" | "paused" | "needs-you" | "done";
   /** Needs you: one plain sentence, and the one button that fixes it. */
   reason?: string;
   fix?: AutomationFix;
@@ -205,10 +231,13 @@ function ownerFix(run: RoutineRun): { reason: string; fix: AutomationFix } | nul
   return null;
 }
 
-/** Paused when switched off. Needs you when its last run waits on the person, failed for a reason only the person can
- * fix, or failed twice running. A run that failed and then recovered is Working. */
-export function automationStatus(automation: Pick<Automation, "enabled" | "runs">): AutomationStatus {
-  if (!automation.enabled) return { state: "paused" };
+/** Done when a one-time automation's time has passed, Paused when switched off. Needs you when its last run waits on the
+ * person, its app needs reconnecting, failed for a reason only the person can fix, or failed twice running. A run that
+ * failed and then recovered is Working. */
+export function automationStatus(automation: Pick<Automation, "enabled" | "runs"> & Partial<Pick<Automation, "schedule" | "appTrigger">>, now = Date.now()): AutomationStatus {
+  if (!automation.enabled) return isDone(automation, now) ? { state: "done" } : { state: "paused" };
+  const app = automation.appTrigger && appProblem(automation.appTrigger);
+  if (app) return { state: "needs-you", ...app };
   const settled = automation.runs.filter((run) => run.status !== "cancelled" && run.status !== "queued");
   const latest = settled[0];
   if (latest?.status === "waiting") return { state: "needs-you", reason: t("automations.reason.answer"), fix: "answer" };
@@ -222,9 +251,17 @@ export function automationStatus(automation: Pick<Automation, "enabled" | "runs"
   return { state: "working" };
 }
 
-const RANK = { "needs-you": 0, working: 1, paused: 2 } as const;
+/** A one-time automation whose time has passed: turning it back on would have nothing to do. */
+export const isDone = (automation: Partial<Pick<Automation, "schedule">>, now = Date.now()) =>
+  automation.schedule?.type === "once" && automation.schedule.at <= now;
 
-/** Needs you first, then Working, then Paused; within each, the soonest next run, then by name. */
+export const STATUS_WORD: Record<AutomationStatus["state"], LocaleKey> = {
+  working: "automations.status.working", paused: "automations.status.paused", "needs-you": "automations.status.needsYou", done: "automations.status.done",
+};
+
+const RANK = { "needs-you": 0, working: 1, paused: 2, done: 3 } as const;
+
+/** Needs you first, then Working, then Paused, then Done; within each, the soonest next run, then by name. */
 export function orderAutomations<T extends Automation>(automations: readonly T[]): T[] {
   return automations
     .map((automation) => ({ automation, rank: RANK[automationStatus(automation).state] }))
@@ -236,12 +273,13 @@ export function orderAutomations<T extends Automation>(automations: readonly T[]
 
 /** The grey line under a sentence: "Working · last ran today 9:02 AM · next Monday 9:00 AM". */
 export function statusLine(automation: Automation, now = Date.now()): string {
-  const status = automationStatus(automation);
+  const status = automationStatus(automation, now);
   const latest = automation.runs.find((run) => run.status !== "queued");
-  const parts = [t(status.state === "paused" ? "automations.status.paused" : status.state === "needs-you" ? "automations.status.needsYou" : "automations.status.working")];
+  const parts = [t(STATUS_WORD[status.state])];
   if (latest?.status === "running") parts.push(t("automations.runningNow"));
   else if (latest) parts.push(`${t("automations.lastRan", { when: lastWhen(runTime(latest), now) })}${isProblem(latest) ? " ✗" : ""}`);
-  else parts.push(t("automations.notRunYet"));
+  else if (!automation.appTrigger) parts.push(t("automations.notRunYet"));
+  if (automation.appTrigger) parts.push(...appStatusParts(automation.appTrigger, Boolean(latest)), ...[skippedToday(automation.appTrigger, now) ?? []].flat());
   if (automation.nextRunAt != null) parts.push(t("automations.next", { when: nextWhen(automation.nextRunAt, now) }));
   return parts.join(" · ");
 }
@@ -264,4 +302,50 @@ export const AUTOMATION_FIX_LABEL: Record<AutomationFix, LocaleKey> = {
   usage: "automations.fix.usage",
   edit: "automations.fix.edit",
   run: "automations.fix.run",
+  reconnect: "automations.fix.reconnect",
 };
+
+export const CALLS_SHOWN = 30;
+export const CALL_PREVIEW_CHARS = 240;
+
+export interface WebhookCall {
+  id: string;
+  at: number;
+  /** ✓ when it was taken in, ✗ when it was turned away or skipped. */
+  ok: boolean;
+  reason: string;
+  /** The payload's first characters; empty when nothing trustworthy was received (a wrong secret, say). */
+  preview: string;
+}
+
+/** One incoming call in plain words: why it was taken in, turned away or skipped. */
+function callReason(attempt: WebhookAttempt): { ok: boolean; reason: string } {
+  if (attempt.outcome === "accepted") return { ok: true, reason: t("automations.calls.received") };
+  if (attempt.outcome === "captured") return { ok: true, reason: t("automations.calls.test") };
+  if (attempt.outcome === "duplicate") return { ok: false, reason: t("automations.calls.duplicate") };
+  if (attempt.outcome === "ignored") return { ok: false, reason: attempt.eventName ? t("automations.calls.skipped", { kind: attempt.eventName }) : t("automations.calls.noKind") };
+  const repeats = Number(/\((\d+) requests\)/.exec(attempt.reason ?? "")?.[1] ?? 1);
+  if (attempt.statusCode === 401) return { ok: false, reason: repeats > 1 ? t("automations.calls.wrongSecretTimes", { count: repeats }) : t("automations.calls.wrongSecret") };
+  if (attempt.statusCode === 409) return { ok: false, reason: t("automations.calls.paused") };
+  if (attempt.statusCode === 410) return { ok: false, reason: t("automations.calls.botGone") };
+  if (attempt.statusCode === 429) return { ok: false, reason: /rate limit/i.test(attempt.reason ?? "") ? t("automations.calls.tooFast") : t("automations.calls.tooMany") };
+  if (attempt.statusCode === 413) return { ok: false, reason: t("automations.calls.tooLarge") };
+  if (attempt.statusCode === 400) return { ok: false, reason: t("automations.calls.unreadable") };
+  return { ok: false, reason: t("automations.calls.refused") };
+}
+
+/** The last calls another app made to this automation, newest first, including the ones turned away. */
+export function webhookCalls(webhookId: string, attempts: readonly WebhookAttempt[]): WebhookCall[] {
+  return attempts.filter((attempt) => attempt.webhookId === webhookId)
+    .sort((left, right) => right.receivedAt - left.receivedAt)
+    .slice(0, CALLS_SHOWN)
+    .map((attempt) => ({ id: attempt.id, at: attempt.receivedAt, ...callReason(attempt), preview: (attempt.preview ?? "").slice(0, CALL_PREVIEW_CHARS) }));
+}
+
+/** The newest payload it accepted, so instructions can name its real fields. A turned-away call never counts. */
+export function lastReceived(webhook: Pick<WebhookTrigger, "id" | "verificationSample">, attempts: readonly WebhookAttempt[]): { at: number; preview: string } | null {
+  const latest = attempts.filter((attempt) => attempt.webhookId === webhook.id && attempt.outcome !== "rejected" && attempt.preview)
+    .reduce<WebhookAttempt | null>((newest, attempt) => (!newest || attempt.receivedAt > newest.receivedAt ? attempt : newest), null);
+  if (latest) return { at: latest.receivedAt, preview: latest.preview! };
+  return webhook.verificationSample?.preview ? { at: webhook.verificationSample.receivedAt, preview: webhook.verificationSample.preview } : null;
+}

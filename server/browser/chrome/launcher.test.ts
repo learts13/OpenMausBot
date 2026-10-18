@@ -6,7 +6,7 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 import { removeTempDir } from "../../testing/cleanup.ts";
 import type { ChromeIdentity } from "./identity.ts";
 import { chromeForTestingExecutable, chromeForTestingPin, type installChromeForTesting } from "./install.ts";
-import { ChromeLauncher } from "./launcher.ts";
+import { ChromeLauncher, runsLauncher } from "./launcher.ts";
 import { chromeHost } from "./resolve.ts";
 import type { IdentitySidecars } from "./sidecar.ts";
 
@@ -176,6 +176,19 @@ describe("the Chrome launcher", () => {
     await expect(chrome.ready(headless(chrome.path))).rejects.toThrow(/Chrome could not be started \(the browser launcher does not run here/);
     expect(chrome.env()).toEqual({});
     chmodSync(machine.chrome, 0o755);
+  });
+
+  it.skipIf(process.platform === "win32")("counts a launcher check that only ran out of time as running, and still refuses one that fails", async () => {
+    const root = mkdtempSync(join(tmpdir(), "omb-launcher-check-"));
+    folders.push(root);
+    const slow = join(root, "slow.sh"), failing = join(root, "failing.sh");
+    // A Cloud machine just after a restart: the launcher starts but answers late.
+    writeFileSync(slow, "#!/bin/sh\nexec sleep 5\n", { mode: 0o755 });
+    writeFileSync(failing, "#!/bin/sh\nexit 3\n", { mode: 0o755 });
+    await expect(runsLauncher(slow, process.env, 200)).resolves.toBeUndefined();
+    await expect(runsLauncher(failing, process.env, 5_000)).rejects.toThrow(/the browser launcher does not run here/);
+    chmodSync(slow, 0o644);
+    await expect(runsLauncher(slow, process.env, 5_000)).rejects.toThrow(/the browser launcher does not run here/);
   });
 
   it("changes nothing on OMB_BROWSER_LEGACY_SHELL=1", async () => {

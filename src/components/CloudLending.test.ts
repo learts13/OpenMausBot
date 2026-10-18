@@ -9,7 +9,7 @@ vi.mock("react", async original => ({ ...await original<typeof import("react")>(
   useRef: (initial: unknown) => { const index = f.index++; if (!(index in f.values)) f.values[index] = { current: initial }; return f.values[index]; },
   useEffect: (effect: EffectCallback) => { f.effects.push(effect); },
 }));
-import { CloudLending, lendingStatusKey } from "./CloudLending";
+import { CloudLending, lendingStatusKey, lendingStoppedLine } from "./CloudLending";
 
 type Node = ReactElement<{ children?: ReactNode; onClick?: () => void; onChange?: (event: { target: { checked: boolean } }) => void; role?: string; type?: string; "aria-label"?: string; disabled?: boolean; checked?: boolean }>;
 function nodes(value: ReactNode): Node[] { if (!isValidElement(value)) return []; const node = value as Node; return [node, ...Children.toArray(node.props.children).flatMap(nodes)]; }
@@ -90,4 +90,35 @@ it("apps and screen cannot be chosen until this app's computer control is ready"
   const checkbox = view.nodes.find(node => node.type === "input" && node.props.checked === false && node.props.disabled === true);
   expect(checkbox).toBeTruthy();
   expect(view.html).toContain("Set up computer control for this app first");
+});
+
+// A customer saw the switch off while his computer still showed apps and screen lent, with no reason given.
+it("an off switch says why and since when, keeps the choices, and lends the same again in one click", async () => {
+  const at = new Date(2026, 9, 7, 14, 2).getTime();
+  const stopped: CloudLendingSnapshot = { available: true, screenAvailable: true, activity: [],
+    state: { enabled: false, folders: [folder], screen: true, busy: false, stopped: { reason: "signed-out", at } } };
+  expect(lendingStoppedLine(stopped.state)).toBe("Off since Oct 7, 2026, 2:02 PM, when you signed out of MausBot Cloud.");
+  expect(lendingStoppedLine({ ...stopped.state!, stopped: { reason: "you", at } })).toBe("Off since Oct 7, 2026, 2:02 PM: you turned it off.");
+  expect(lendingStoppedLine({ ...stopped.state!, stopped: { reason: "something-new", at } })).toBe("Off since Oct 7, 2026, 2:02 PM.");
+  expect(lendingStoppedLine(lent.state)).toBeNull();
+  await ready(stopped);
+  const view = render();
+  expect(view.html).toContain('data-lending-stopped="signed-out"');
+  expect(view.html).not.toContain("Apps and screen<");
+  view.nodes.find(node => node.type === "button" && Children.toArray(node.props.children).join("") === "Lend the same again")!.props.onClick!();
+  await flush();
+  expect(vi.mocked(bridge.save).mock.calls).toEqual([[{ folders: [folder], screen: true }]]);
+});
+
+it("says how it is lent when Computer access lent it, terminal included, and when My Cloud last used it", async () => {
+  const viaAccess: CloudLendingSnapshot = { available: true, screenAvailable: true,
+    activity: [{ at: Date.now() - 3 * 60_000, server: "My Cloud", origin: "https://omb-u-1.fly.dev", action: "computer_call", detail: "", ok: true }],
+    state: { enabled: true, folders: [], screen: true, busy: false, via: "access", terminal: true, problem: "access-off" } };
+  expect(lendingStatusKey(viaAccess, true)).toBe("lending.status.accessOff");
+  await ready(viaAccess);
+  const html = render().html;
+  expect(html).toContain("Lent through Computer access in Settings → Servers, terminal included.");
+  expect(html).toContain("My Cloud last used this computer 3 minutes ago.");
+  await ready({ ...lent, activity: [] });
+  expect(render().html).toContain("My Cloud hasn&#x27;t used this computer yet.");
 });

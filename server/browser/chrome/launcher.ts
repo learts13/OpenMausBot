@@ -38,10 +38,15 @@ const message = (error: unknown) => error instanceof Error ? error.message : Str
 export { chromeFingerprint };
 
 /** A data dir on a volume mounted noexec cannot run the launcher; finding that out before the engine needs it keeps the
- * engine's own browser instead of a browser that never starts. */
-function runsLauncher(path: string, env: NodeJS.ProcessEnv): Promise<void> {
+ * engine's own browser instead of a browser that never starts. A check that only ran out of time still ran: a noexec
+ * volume refuses the launcher at once. That happens on a Cloud machine in its first seconds after a restart, starved of
+ * CPU, and must not cost it this launcher until the next restart. */
+export function runsLauncher(path: string, env: NodeJS.ProcessEnv, timeoutMs = 10_000): Promise<void> {
   return new Promise((resolve, reject) => {
-    execFile(path, ["--version"], { env, timeout: 10_000, windowsHide: true }, (error) => error ? reject(new Error(`the browser launcher does not run here: ${error.message}`)) : resolve());
+    execFile(path, ["--version"], { env, timeout: timeoutMs, windowsHide: true }, (error) => {
+      if (!error || error.killed) return resolve();
+      reject(new Error(`the browser launcher does not run here: ${error.message}`));
+    });
   });
 }
 

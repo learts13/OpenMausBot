@@ -50,6 +50,22 @@ describe("the identity sidecar", () => {
     expect(browser.sent.find((message) => message.sessionId === "page-1" && message.method === "Target.setAutoAttach")?.params).toEqual({ autoAttach: true, waitForDebuggerOnStart: true, flatten: true });
   });
 
+  it("sends a headless browser's pages' passkey requests where no hidden sheet can freeze them", async () => {
+    const headless = fakeBrowser();
+    await startIdentitySidecar("ws://127.0.0.1:9/devtools/browser/x", IDENTITY, headless.connect, { passkeysWithoutSheet: true });
+    headless.attach("page-1", "page");
+    headless.attach("frame-1", "iframe", "page-1");
+    await headless.settle();
+    expect(headless.on("page-1")).toEqual(["WebAuthn.enable", "Emulation.setUserAgentOverride", "Target.setAutoAttach", "Runtime.runIfWaitingForDebugger"]);
+    expect(headless.sent.find((message) => message.method === "WebAuthn.enable")?.params).toEqual({ enableUI: false });
+    expect(headless.on("frame-1")).not.toContain("WebAuthn.enable");
+    const headed = fakeBrowser();
+    await startIdentitySidecar("ws://127.0.0.1:9/devtools/browser/x", IDENTITY, headed.connect);
+    headed.attach("page-1", "page");
+    await headed.settle();
+    expect(headed.on("page-1")).not.toContain("WebAuthn.enable");
+  });
+
   it("never sends the calls sites detect, whatever attaches", async () => {
     const browser = fakeBrowser();
     await startIdentitySidecar("ws://127.0.0.1:9/devtools/browser/x", IDENTITY, browser.connect);

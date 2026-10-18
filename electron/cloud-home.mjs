@@ -161,6 +161,22 @@ export function rememberedCloudHome(previous, state) {
   return previous?.accountId === accountId ? previous : null;
 }
 
+/** Signs this app back in to the person's own Cloud when its session there has ended (unused for a month, or signed out
+ * there), so lending resumes by itself: a fresh one-time code from the Admin for the Cloud it verified, redeemed into the
+ * window's own cookie, as opening My Cloud does. Never for any other origin. */
+export async function signInCloudSession({ origin, mine, pair, fetch: fetchImpl }) {
+  if (!origin || origin !== mine) return false;
+  try {
+    const grant = await pair();
+    if (grant?.origin !== origin || typeof grant.code !== "string") return false;
+    const response = await fetchImpl(`${origin}/api/auth/pair`, {
+      method: "POST", credentials: "include", redirect: "error", cache: "no-store", signal: AbortSignal.timeout(15_000),
+      headers: { "content-type": "application/json", origin }, body: JSON.stringify({ code: grant.code, cookie: true, label: "OpenMausBot app (lending)" }),
+    });
+    return response.ok;
+  } catch { return false; }
+}
+
 /** The one rule for "this page is my Cloud".
  *
  * @param {{ account: { homeTarget(): { origin: string } | null, state(): { account?: { id: string } } } | null,

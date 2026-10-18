@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import readline from "node:readline";
 import { lentScreenArguments, lentScreenToolListing } from "./lent-screen-tools.mjs";
+import { helperMissing } from "./lent-screen-failures.mjs";
 
 const LIMIT = 256 * 1024;
 const PROTECTED = "Desktop credentials and sharing settings cannot be accessed through a shared folder";
@@ -72,12 +73,15 @@ async function assertOutsideProtected(identities, target) {
 
 const text = value => ({ content: [{ type: "text", text: typeof value === "string" ? value : JSON.stringify(value) }] });
 
+const POSIX_PATH = /(?:\/[^/\s]+)+/g;
+/** A Windows folder may hold spaces, so everything up to a line's last backslash goes. */
+const WINDOWS_FOLDERS = /(?:[A-Za-z]:|\\\\[^\\\s]+)\\(?:[^\\\r\n]*\\)*/g;
 /** Job error text crosses to a remote workspace, so absolute paths collapse to their basename (the original is logged here). */
 const basenameMessage = message => {
   const original = String(message);
-  if (!original.match(/(?:\/[^/\s]+)+/g)) return original;
+  if (!original.match(POSIX_PATH) && !original.match(WINDOWS_FOLDERS)) return original;
   console.warn("Shared computer error before path sanitization:", original);
-  return original.replace(/(?:\/[^/\s]+)+/g, matched => matched.slice(matched.lastIndexOf("/") + 1));
+  return original.replace(WINDOWS_FOLDERS, "").replace(POSIX_PATH, matched => matched.slice(matched.lastIndexOf("/") + 1));
 };
 export const sharedComputerError = error => ({ ...text(basenameMessage(error?.message ?? "Computer action failed")), isError: true });
 
@@ -105,6 +109,10 @@ function killTree(child) {
 }
 
 /** No inherited API keys, provider credentials or shell startup files, but still UNRESTRICTED host execution once terminal is on. */
+/** No inherited API keys or provider credentials. On Windows a child without SystemRoot cannot start Winsock, one
+ * without USERPROFILE has no home, and one without TEMP or TMP puts temporary files in the Windows folder. */
+const hostEnvironment = () => Object.fromEntries(["PATH", "PATHEXT", "HOME", "USERPROFILE", "SystemRoot", "TEMP", "TMP", "LANG"].filter(key => process.env[key]).map(key => [key, process.env[key]]));
+
 export function sharedCommand(command, cwd, signal) {
   if (typeof command !== "string" || !command.trim() || command.length > 8000) throw new Error("Give a command of at most 8000 characters");
   signal.throwIfAborted();
@@ -118,7 +126,7 @@ export function sharedCommand(command, cwd, signal) {
     const child = spawn(windows ? "powershell.exe" : "/bin/sh", windows ? ["-NoProfile", "-NonInteractive", "-Command", script] : ["-c", script], {
       cwd, detached: !windows, windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
       // Without PATHEXT, PowerShell treats even .exe files as documents.
-      env: Object.fromEntries(["PATH", "PATHEXT", "HOME", "USERPROFILE", "SystemRoot", "TEMP", "TMP", "LANG"].filter(key => process.env[key]).map(key => [key, process.env[key]])),
+      env: hostEnvironment(),
     });
     const chunks = []; let bytes = 0; let reason;
     const stop = message => { reason = message; killTree(child); };
@@ -139,11 +147,16 @@ export function sharedCommand(command, cwd, signal) {
 export function createSharedCua(connection) {
   const child = spawn(connection.mcpCommand, connection.mcpArgs, {
     stdio: ["pipe", "pipe", "ignore"], windowsHide: true,
-    env: { PATH: process.env.PATH, HOME: process.env.HOME, ...connection.mcpEnv },
+    env: { ...hostEnvironment(), ...connection.mcpEnv },
   });
   let sequence = 0; let closed = false; let bytes = 0;
   const pending = new Map();
-  const fail = error => { closed = true; for (const item of pending.values()) item.reject(error); pending.clear(); child.kill(); };
+  const fail = error => {
+    closed = true;
+    const reason = child.pid === undefined ? new Error(helperMissing()) : error;
+    for (const item of pending.values()) item.reject(reason);
+    pending.clear(); child.kill();
+  };
   child.on("error", fail);
   child.stdin.on("error", fail);
   child.on("exit", () => fail(new Error("Computer-control transport closed")));

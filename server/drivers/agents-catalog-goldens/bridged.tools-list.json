@@ -207,7 +207,7 @@
     },
     {
       "name": "request_credential",
-      "description": "Ask the user for a supported API key through OpenMausBot's secure credential flow. The desktop app and a freshly QR-paired mobile app show a secure entry card; older mobile pairings show how to pair again or finish on the computer. Never claim a secure field opened unless this request succeeds, and never ask the user to paste a secret into chat. The secret is saved by the desktop app and is never returned to you. After calling this tool, end the turn; OpenMausBot resumes the task after the user saves or declines.",
+      "description": "Ask for a supported API key or a 1Password service account token (onePasswordToken) through OpenMausBot's secure credential flow: the app shows a secure entry card, as does a freshly QR-paired phone; older pairings show how to pair again. Never claim a secure field opened unless this request succeeds, and never ask the user to paste a secret into chat. OpenMausBot saves it and never returns it to you. After calling this tool, end the turn; OpenMausBot resumes the task after the user saves or declines.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -219,7 +219,8 @@
               "opencodeGoApiKey",
               "ttsKey",
               "fishAudioKey",
-              "openaiImageApiKey"
+              "openaiImageApiKey",
+              "onePasswordToken"
             ],
             "description": "The credential the current task requires."
           },
@@ -335,7 +336,7 @@
     },
     {
       "name": "find_tool",
-      "description": "Find an OpenMausBot tool that is not in your tool list. Say what you want to do in a few words, or give the tool's name. Each match comes back with its description and exact input schema; run one with use_tool. A tool in your tool list is called directly, not found here. Tools reached this way: list_shared_computers, shared_computer, assignment_status, raise_escalation, list_threads, close_thread, start_thread, vm_exec, show_widget, update_widget, create_bot, list_team_setup, propose_team_setup, propose_bot_deletion, create_room, manage_room, retry_thread, memory_log, session_search, session_read, list_triggers, create_trigger, manage_trigger, propose_profile, propose_model, propose_team_memory, skills_list, skill_manage, add_mcp_server.",
+      "description": "Find an OpenMausBot tool that is not in your tool list. Say what you want to do in a few words, or give the tool's name. Each match comes back with its description and exact input schema; run one with use_tool. A tool in your tool list is called directly, not found here. Tools reached this way: list_shared_computers, shared_computer, assignment_status, raise_escalation, list_threads, close_thread, start_thread, vm_exec, show_widget, update_widget, create_bot, list_team_setup, propose_team_setup, propose_bot_deletion, create_room, manage_room, x_search, x_user_posts, x_post, x_profile, research_search, research_endpoint, research_call, retry_thread, memory_log, session_search, session_read, list_triggers, list_trigger_events, create_trigger, manage_trigger, propose_profile, propose_model, propose_team_memory, skills_list, skill_manage, add_mcp_server.",
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,

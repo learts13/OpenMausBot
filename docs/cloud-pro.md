@@ -621,6 +621,36 @@ open: quitting it (or the Mac sleeping) only pauses lending, and it resumes
 when the app runs again with the switch still on. Below the choices, **Activity
 on this computer** lists every request the Cloud made, refused ones included.
 
+The switch always says where lending stands, whichever way it got there:
+
+- **Off, and why.** When lending stops (the person turned it off, signed out
+  of MausBot Cloud, another account signed in, or My Cloud moved to another
+  machine) the reason and the time are kept with the grant, so after a restart
+  the switch still says "Off since 7 Oct, 14:02, when you signed out of MausBot
+  Cloud." The folders and apps-and-screen choice are kept too: **Lend the same
+  again** restores them in one click.
+- **One control for My Cloud.** **Settings → Servers** no longer offers
+  **Computer access** for My Cloud's entry (it wrote the same record with a
+  terminal option this switch never offers, so the switch could read off while
+  that panel showed apps and screen lent). That entry links here instead. A
+  Computer access grant saved for My Cloud before shows here as lent, terminal
+  included, and when it cannot run (that panel follows the maintainer flag) it
+  says so. Stopping or choosing here replaces it.
+- **Last used.** "My Cloud last used this computer 3 minutes ago", from the
+  activity log.
+- **Reconnects by itself.** Lending already resumed after sleep, a lost
+  network or a Cloud restart. When this app's session on the Cloud has ended
+  (unused for a month, or signed out there), main now signs the window back in
+  to the verified Cloud with a fresh one-time code, as **Open My Cloud** does,
+  at most every 15 minutes, instead of waiting for a click. A saved Cloud
+  sign-in still being read at startup pauses lending; it never counts as a
+  sign-out.
+
+On My Cloud's own page, **Settings → MausBot Cloud** lists **Computers lent to
+My Cloud**: each by name and platform, **Online now**, **Offline, last online
+…**, or **No longer lent**, what it lends and when My Cloud last used it, with
+**Change what's lent** opening this computer's switch.
+
 While lending is on, a menu-bar item shows it (**In use** while the Cloud is
 running something on this Mac) with **Stop lending**. Turning the switch off or
 choosing **Stop lending** stops at once: the Cloud is told, a running action
@@ -678,6 +708,19 @@ On the Cloud home (`server/shared-computers.ts`, `server/index.ts`):
 - Lending is on for every Cloud home, with no maintainer flag.
 - Only the owner's admin sessions (the Admin's signed pairing gives the
   desktop one) can lend.
+- **What it remembers** (`server/lent-computers.ts`, `lent-computers.json`):
+  for each computer lent to it, by name, its platform (sent by desktops once
+  the Cloud advertises `lendingDetails`), how many folders it lends and whether
+  apps and screen or a terminal, when it was last online (written at most once
+  a minute) and last used, and whether its owner turned lending off. Never a
+  folder name or path, a secret or anything a job carried; kept 90 days.
+- **What bots are told.** `list_shared_computers` lists online computers with
+  their `device` ("PC", "Mac" or "computer"). When none is online it adds
+  `offline` and a `say` sentence naming the computer, its kind and when it was
+  last online ("Their PC ASH-PC is lent to My Cloud but offline (last online
+  …)"), or that lending was turned off on it. The Cloud prompt names the
+  person's computer the same way and tells bots never to call a PC a Mac; an
+  offline `shared_computer` call says the same.
 - The server refuses operations outside the scopes the Mac registered before
   queuing them, never retries an operation with an unknown outcome, and never
   substitutes its own files for an offline Mac.
@@ -859,7 +902,7 @@ and Fly restarts the machine. The one exception: after a restore commits
 (`server/restart.ts`) and the launcher starts only the server again.
 
 The machine's secrets (`OMB_CLOUD_BOOTSTRAP_SECRET` and the relay tokens
-`OMB_CLOUD_BOAT_TOKEN`, `OMB_CLOUD_VOICE_TOKEN`, `OMB_CLOUD_DECIDER_TOKEN`)
+`OMB_CLOUD_BOAT_TOKEN`, `OMB_CLOUD_VOICE_TOKEN`, `OMB_CLOUD_DECIDER_TOKEN`, `OMB_CLOUD_X_TOKEN`)
 arrive as the launcher's environment, from the Fly app secrets the Admin
 sets. The launcher never puts them in a child's environment, because
 `/proc/<pid>/environ` keeps a process's starting environment for anything
@@ -959,6 +1002,8 @@ For each service the Admin has configured, it also sets:
 | `OMB_TTS_DEFAULT_VOICE` | env | An ElevenLabs voice id, used until the person picks a voice or another speech provider in Settings. |
 | `OMB_CLOUD_DECIDER_URL` | env | `https://cloud.openmausbot.com/api/cloud/services/decider`, the Admin's Jev relay. It is a Jev base URL, used as it is: the decider adds `/v1/systemone`, the relay's only route, so every included decision goes to exactly `<OMB_CLOUD_DECIDER_URL>/v1/systemone`. |
 | `OMB_CLOUD_DECIDER_TOKEN` | secret | This machine's decision relay token (`omb_decide_…`). It is not a Jev key and works only through the relay. |
+| `OMB_CLOUD_X_URL` | env | `https://cloud.openmausbot.com/api/cloud/services/x`, the Admin's treg relay; the client calls `<OMB_CLOUD_X_URL>/call/<endpoint>` for the X tools' eight endpoints, and `/research/search`, `/research/endpoints/<id>` and `/research/call/<id>` for the research tools. A person's own treg key (Settings → API keys) wins over it and goes straight to treg. |
+| `OMB_CLOUD_X_TOKEN` | secret | This machine's X research relay token (`omb_x_…`). Not a treg key; it works only through the relay, within the plan's monthly X research calls. A signed-in desktop gets its own (`omb_xd_…`) from `POST /api/cloud/desktop/services/x` and hands it to its server in memory. |
 
 A service is included only when both its URL and its token are set
 (`server/included-services.ts`). The real Boat, ElevenLabs and Jev keys stay

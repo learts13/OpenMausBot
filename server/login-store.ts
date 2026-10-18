@@ -1,5 +1,6 @@
 // Sealed under a key of its own (a 0600 file beside it), never the browser engine's, which every browser process gets in
-// its environment. Neither file is ever backed up, exported or moved: a saved password stays on its computer.
+// its environment. Neither file is ever backed up, exported or moved: a saved password stays on its computer, unless the
+// person sends that one login to their own Cloud with Also use on My Cloud (login-handoff.ts).
 import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";

@@ -294,9 +294,25 @@ describe("cloudHomePrompt", () => {
 
   it("points to a lent computer only when the turn has the shared-computer tools", () => {
     expect(cloudHomePrompt(true)).toContain("check list_shared_computers: a computer they lend to My Cloud is reachable through shared_computer");
-    expect(cloudHomePrompt(true)).toContain("turn on Let My Cloud use this computer under Settings → MausBot Cloud in the desktop app on that computer");
+    expect(cloudHomePrompt(true)).toContain("turn on Let My Cloud use this computer under Settings → MausBot Cloud in OpenMausBot on that computer");
+    expect(cloudHomePrompt(true)).toContain("use its say field when it has one");
     expect(cloudHomePrompt(false)).not.toMatch(/shared_computer|list_shared_computers/);
-    expect(cloudHomePrompt(false)).toContain("You cannot see or use their Mac or PC, its screen or its files from here.");
+    expect(cloudHomePrompt(false)).toContain("You cannot see or use their own computer, its screen or its files from here.");
+  });
+
+  // A Windows user was told to turn on "Let My Cloud use this Mac" on "this Mac", and the Cloud called "OMB Cloud".
+  it("names the person's computer by its platform, never a Mac unless it is one, and the product by its name", () => {
+    const pc = cloudHomePrompt(true, [], [{ name: "ASH-PC", platform: "win32" }]);
+    expect(pc).toContain("If they ask for something on their PC (ASH-PC), check list_shared_computers");
+    expect(pc).toContain("in OpenMausBot on that PC. It is a PC: call it that, never a Mac unless it is one.");
+    const mac = cloudHomePrompt(false, [], [{ name: "Ash’s MacBook", platform: "darwin" }, { name: "ASH-PC", platform: "win32" }]);
+    expect(mac).toContain("You cannot see or use their Mac (Ash’s MacBook), its screen or its files from here.");
+    for (const text of [pc, mac, cloudHomePrompt(true), cloudHomePrompt(true, [], [{ name: "box", platform: "linux" }])]) {
+      expect(text).not.toMatch(/this Mac|OMB Cloud|OpenMausBot Cloud|Mac or PC/u);
+      if (text.includes("Settings →")) expect(text).toContain("Settings → MausBot Cloud");
+    }
+    expect(cloudHomePrompt(true, [], [{ name: "box", platform: "linux" }])).toContain("Call it their computer: never assume it is a Mac.");
+    expect(cloudHomePrompt(true, [], [{ name: "evil\u202eNAME\nnext", platform: "win32" }])).not.toMatch(/[\u202e\n]/u);
   });
 });
 

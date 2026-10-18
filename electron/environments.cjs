@@ -92,23 +92,60 @@ function workspaceSenderAllowed(event, contents, state, localOrigin) {
   }
 }
 
-/** Native menu choices, never renderer-supplied destinations or callbacks. `iconFor`: a saved colour's small dot, when main can draw one. */
-function workspaceMenuTemplate(state, { onSwitch, onConnect, onForget, onAddCloud, sublabels = {}, iconFor = null }) {
+/** Native menu choices, never renderer-supplied destinations or callbacks. `iconFor`: a saved colour's small dot, when main can draw one.
+ * `places`: the one line saying which side has which bots, shown first; `copyToCloud`: the existing way to bring this
+ * computer's bots and chats over. `foldSublabels`: where menus show no sublabels (Windows, Linux), My Cloud's status line
+ * joins its name instead of vanishing. */
+function workspaceMenuTemplate(state, { onSwitch, onConnect, onForget, onAddCloud, sublabels = {}, iconFor = null, places = null, copyToCloud = null, foldSublabels = false }) {
   const active = activeEnvironment(state);
   return [
+    ...(places ? [{ id: "workspace-places", label: places, enabled: false }, { type: "separator" }] : []),
     { id: "workspace-local", label: "This computer", type: "radio", checked: !active, click: () => onSwitch(LOCAL_ID) },
     ...state.environments.map((entry) => {
       const icon = iconFor && cleanColor(entry.color) ? iconFor(entry.color) : null;
+      const status = Object.hasOwn(sublabels, entry.id) ? sublabels[entry.id] : null;
       return {
-        id: `workspace-${entry.id}`, label: entry.name, sublabel: Object.hasOwn(sublabels, entry.id) ? sublabels[entry.id] : entry.kind === "local" ? entry.dataDir : new URL(entry.origin).host,
+        id: `workspace-${entry.id}`, label: foldSublabels && status ? `${entry.name} · ${status}` : entry.name,
+        sublabel: status ?? (entry.kind === "local" ? entry.dataDir : new URL(entry.origin).host),
         ...(icon ? { icon } : {}), type: "radio", checked: entry.id === state.activeId, click: () => onSwitch(entry.id),
       };
     }),
+    ...(copyToCloud ? [{ id: "workspace-copy-to-cloud", label: copyToCloud.label, click: copyToCloud.click }] : []),
     ...(onAddCloud ? [{ id: "workspace-add-cloud", label: "Add a Cloud…", sublabel: "Keeps your bots running 24/7", click: onAddCloud }] : []),
     { type: "separator" },
     { id: "workspace-connect", label: "Connect to a server…", click: onConnect },
     ...(active ? [{ id: "workspace-forget", label: `Forget “${active.name}”…`, click: () => onForget(active.id) }] : []),
   ];
+}
+
+/** "Ember", "Ember and Juno", "Ember, Juno and 2 more". */
+function botList(names, shown = 2) {
+  const clean = names.filter((name) => typeof name === "string" && name.trim()).map((name) => name.trim().replace(/\s+/g, " ").slice(0, 40));
+  if (clean.length <= shown + 1) return clean.length > 1 ? `${clean.slice(0, -1).join(", ")} and ${clean.at(-1)}` : clean[0] ?? "";
+  return `${clean.slice(0, shown).join(", ")} and ${clean.length - shown} more`;
+}
+
+/** Bots, chats and skills live on each side by design; this says which side has which, from where the person is now. */
+function placesLine({ cloudName = "My Cloud", onCloud, localBots }) {
+  const names = botList(localBots);
+  if (onCloud) return names ? `Your bots live on ${cloudName}. This computer has its own: ${names}.` : `Your bots live on ${cloudName}. This computer has none of its own.`;
+  return names ? `These bots live on this computer: ${names}. ${cloudName} has its own.` : `This computer has no bots of its own yet. ${cloudName} has its own.`;
+}
+
+/** The switcher's extra options once the person has My Cloud: the places line, the existing way to bring this computer's
+ * bots and chats over (Settings → MausBot Cloud), and the Cloud's status beside its name where menus show no sublabels.
+ * Bot names come from this computer's own server; when it does not answer at once the line is left out, never guessed. */
+async function placesMenuOptions({ cloud, activeId, platform, port, onCopy,
+  localBots = () => fetch(`http://127.0.0.1:${port}/api/bots`, { signal: AbortSignal.timeout(700) }).then((response) => response.json()) }) {
+  const foldSublabels = platform !== "darwin";
+  if (!cloud) return { foldSublabels };
+  let names = null;
+  try { const listed = await localBots(); names = Array.isArray(listed?.bots) ? listed.bots.map((bot) => bot?.name) : null; } catch {}
+  return {
+    foldSublabels,
+    copyToCloud: { label: `Bring this computer's bots and chats to ${cloud.name}…`, click: onCopy },
+    ...(names ? { places: placesLine({ cloudName: cloud.name, onCloud: activeId === cloud.id, localBots: names }) } : {}),
+  };
 }
 
 function cleanName(value, fallback) {
@@ -302,6 +339,8 @@ module.exports = {
   withMicrophone,
   withoutEnvironment,
   workspaceMenuTemplate,
+  placesLine,
+  placesMenuOptions,
   workspaceNavigationAllowed,
   workspaceSenderAllowed,
   workspaceSummary,

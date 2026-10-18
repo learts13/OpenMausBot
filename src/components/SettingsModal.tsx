@@ -8,6 +8,7 @@ import { withTourReset } from "@/lib/guided-tour";
 import { completionPatch } from "@/lib/onboarding";
 import { AnthropicEveryClaudeBot, ApiKeyRow, OpenCodeProviderKeys, VpsConnection } from "./ApiKeys";
 import { AnalyticsRow } from "./AnalyticsRow";
+import { DiagnosticsRow } from "./DiagnosticsRow";
 import { OtherOpenAiCompatServers } from "./OpenAiCompatServers";
 import { DecisionModelSettings } from "./DecisionModelSettings";
 import { useUpdaterState } from "@/lib/updater";
@@ -633,47 +634,6 @@ function BrowserProfilesRow() {
   );
 }
 
-/** Security: the report never holds credential values; the desktop shell does not read secret fields. */
-function DiagnosticsRow() {
-  const [exporting, setExporting] = useState(false);
-  const [result, setResult] = useState<{ kind: "success" | "error"; message: string } | null>(null);
-
-  const exportDiagnostics = async () => {
-    if (!window.ogb?.exportDiagnostics || exporting) return;
-    setExporting(true);
-    setResult(null);
-    try {
-      const path = await window.ogb.exportDiagnostics();
-      if (path) setResult({ kind: "success", message: t("settings.diagnostics.saved", { path }) });
-    } catch (e) {
-      setResult({ kind: "error", message: e instanceof Error ? e.message : String(e) });
-    } finally {
-      setExporting(false);
-    }
-  };
-
-  return (
-    <SettingRow
-      title={t("settings.diagnostics.title")}
-      subtitle={t("settings.diagnostics.subtitle")}
-      message={result ? (
-        <p role={result.kind === "error" ? "alert" : "status"} className={cn("break-all", result.kind === "error" ? "text-danger" : "text-success")}>
-          {result.message}
-        </p>
-      ) : null}
-    >
-      <button
-        onClick={() => void exportDiagnostics()}
-        disabled={exporting}
-        aria-label={t("settings.diagnostics.aria")}
-        className="ui-button"
-      >
-        {exporting ? t("settings.diagnostics.exporting") : t("settings.diagnostics.export")}
-      </button>
-    </SettingRow>
-  );
-}
-
 export function SettingsModal() {
   const { state, dispatch } = useStore();
   const advanced = useAdvancedMode();
@@ -864,7 +824,7 @@ export function SettingsModal() {
               <ApiKeyRow section="meta" testProvider="meta" />
               <OtherOpenAiCompatServers />
               <div className="pt-2 text-[11.5px] font-medium uppercase tracking-wide text-ink-secondary">{t("keys.integrations.title")}</div>
-              <ApiKeyRow section="box" />
+              <ApiKeyRow section="treg" testProvider="treg" /><ApiKeyRow section="box" />
               <VpsConnection />
               <ApiKeyRow section="opencodeGo" />
               {state.config?.cloudHome !== true && (

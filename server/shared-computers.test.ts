@@ -79,6 +79,70 @@ describe("shared computer authority and lifecycle", () => {
   });
 });
 
+describe("a dropped channel recovers by itself", () => {
+  const screen = () => { const broker = new SharedComputers(() => true); const computer = registration({ computer: true }); broker.register(computer, alice, secret); return { broker, computer }; };
+  it("a reconnecting desktop's poll retires the one whose client dropped, which takes no job", async () => {
+    const { broker, computer } = screen();
+    const dropped = broker.poll(computer.id, alice.session, secret);
+    const fresh = broker.poll(computer.id, alice.session, secret);
+    await expect(dropped).resolves.toBeNull();
+    const result = broker.request({ computer_id: computer.id, action: "computer_tools" }, alice.person, () => true);
+    const job = await fresh;
+    expect(job?.operation.action).toBe("computer_tools");
+    expect(broker.liveJob(computer.id, alice.session, secret, job!.id)).toBe(true);
+    broker.complete(computer.id, alice.session, secret, job!.id, { ok: true });
+    await expect(result).resolves.toEqual({ ok: true });
+    broker.close();
+  });
+  it("a poll whose client went away answers nothing, so its job waits for the next poll", async () => {
+    const { broker, computer } = screen();
+    const gone = new AbortController();
+    const dropped = broker.poll(computer.id, alice.session, secret, gone.signal);
+    gone.abort();
+    await expect(dropped).resolves.toBeNull();
+    const result = broker.request({ computer_id: computer.id, action: "computer_tools" }, alice.person, () => true);
+    const job = await broker.poll(computer.id, alice.session, secret);
+    broker.complete(computer.id, alice.session, secret, job!.id, "done");
+    await expect(result).resolves.toBe("done");
+    broker.close();
+  });
+  it("a job never leased is offered again under a new id, and the lost delivery can never start it", async () => {
+    vi.useFakeTimers();
+    const { broker, computer } = screen();
+    const result = broker.request({ computer_id: computer.id, action: "computer_tools" }, alice.person, () => true);
+    const lost = await broker.poll(computer.id, alice.session, secret);
+    await vi.advanceTimersByTimeAsync(10_000);
+    const again = await broker.poll(computer.id, alice.session, secret);
+    expect(again?.operation).toEqual(lost?.operation);
+    expect(again!.id).not.toBe(lost!.id);
+    expect(broker.liveJob(computer.id, alice.session, secret, lost!.id)).toBe(false);
+    expect(broker.liveJob(computer.id, alice.session, secret, again!.id)).toBe(true);
+    await vi.advanceTimersByTimeAsync(10_000);
+    const nothing = broker.poll(computer.id, alice.session, secret);
+    await vi.advanceTimersByTimeAsync(20_000);
+    await expect(nothing).resolves.toBeNull();
+    broker.complete(computer.id, alice.session, secret, again!.id, "once");
+    await expect(result).resolves.toBe("once");
+    broker.close();
+  });
+  it("waits for a computer that is reconnecting, and names one that stays offline", async () => {
+    vi.useFakeTimers();
+    const { broker, computer } = screen();
+    await vi.advanceTimersByTimeAsync(40_001);
+    const waiting = broker.request({ computer_id: computer.id, action: "computer_tools" }, alice.person, () => true);
+    await vi.advanceTimersByTimeAsync(3_000);
+    broker.register(computer, alice, secret);
+    await vi.advanceTimersByTimeAsync(250);
+    const job = await broker.poll(computer.id, alice.session, secret);
+    broker.complete(computer.id, alice.session, secret, job!.id, "back");
+    await expect(waiting).resolves.toBe("back");
+    await vi.advanceTimersByTimeAsync(45_000);
+    const offline = expect(broker.request({ computer_id: computer.id, action: "computer_tools" }, alice.person, () => true)).rejects.toThrow(/^Desktop is lent but has been offline for 1 min: OpenMausBot on it is closed/);
+    await vi.advanceTimersByTimeAsync(15_000);
+    await offline;
+    broker.close();
+  });
+});
 describe("owner partition (audit H1, H2)", () => {
   it("another person's bot turn cannot list or use a lent computer", async () => {
     const broker = new SharedComputers(() => true);
@@ -99,7 +163,9 @@ describe("owner partition (audit H1, H2)", () => {
     broker.register(computer, alice, secret);
     await vi.advanceTimersByTimeAsync(40_001);
     broker.register(computer, bob, other);
-    await expect(broker.request({ computer_id: computer.id, action: "write_file", folder_id: computer.folders[0]!.id, path: "a.txt", content: "secret" }, alice.person, () => true)).rejects.toThrow(/offline/);
+    const refused = expect(broker.request({ computer_id: computer.id, action: "write_file", folder_id: computer.folders[0]!.id, path: "a.txt", content: "secret" }, alice.person, () => true)).rejects.toThrow(/offline/);
+    await vi.advanceTimersByTimeAsync(15_000);
+    await refused;
     expect(broker.list(alice.person)).toEqual([]);
     broker.register(computer, alice, secret);
     expect(broker.list(alice.person)).toHaveLength(1);
