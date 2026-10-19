@@ -5,10 +5,13 @@ on:
   push:
     branches: [feat/arm64-docker]
     paths:
-      - package.json
       - Dockerfile.arm64
       - .github/workflows/docker-arm64.yml
       - scripts/smoke-arm64-image.sh
+
+env:
+  # Change this only to a published stable upstream release.
+  RELEASE_TAG: v0.1.117
 
 permissions:
   contents: read
@@ -26,12 +29,35 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Validate official stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          gh api "repos/milind-soni/OpenMausBot/releases/tags/$RELEASE_TAG" > /tmp/omb-release.json
+          jq -e --arg tag "$RELEASE_TAG" '.tag_name == $tag and .draft == false and .prerelease == false' /tmp/omb-release.json
+      - name: Check out official release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: milind-soni/OpenMausBot
+          ref: ${{ env.RELEASE_TAG }}
+          path: release-source
+          persist-credentials: false
+      - name: Apply ARM64 packaging and verify source version
+        run: |
+          set -euo pipefail
+          actual=$(node -p 'require("./release-source/package.json").version')
+          test "$actual" = "${RELEASE_TAG#v}"
+          cp Dockerfile.arm64 release-source/Dockerfile.arm64
+          echo "Official release: $RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"
+          echo "Source commit: $(git -C release-source rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
       - name: Build ARM64 image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
-          context: .
-          file: Dockerfile.arm64
+          context: ./release-source
+          file: release-source/Dockerfile.arm64
           platforms: linux/arm64
           load: true
           tags: openmausbot:arm64-test
@@ -39,7 +65,7 @@ jobs:
           cache-from: type=gha,scope=omb-arm64
           cache-to: type=gha,mode=max,scope=omb-arm64
       - name: Test native modules, browser, server and proxy authentication
-        run: bash scripts/smoke-arm64-image.sh openmausbot:arm64-test "$(node -p 'require("./package.json").version')"
+        run: bash scripts/smoke-arm64-image.sh openmausbot:arm64-test "$(node -p 'require("./release-source/package.json").version')"
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
@@ -55,5 +81,7 @@ jobs:
           docker tag openmausbot:arm64-test "$image:arm64"
           docker tag openmausbot:arm64-test "$image:arm64-$COMMIT_SHA"
           docker push "$image:arm64-$COMMIT_SHA"
+          docker tag openmausbot:arm64-test "$image:arm64-$RELEASE_TAG"
+          docker push "$image:arm64-$RELEASE_TAG"
           docker push "$image:arm64"
           echo "Published $image:arm64" >> "$GITHUB_STEP_SUMMARY"
