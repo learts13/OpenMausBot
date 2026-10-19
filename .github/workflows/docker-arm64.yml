@@ -5,6 +5,7 @@ on:
   push:
     branches: [feat/arm64-docker]
     paths:
+      - package.json
       - Dockerfile.arm64
       - .github/workflows/docker-arm64.yml
       - scripts/smoke-arm64-image.sh
