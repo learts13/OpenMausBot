@@ -38,6 +38,7 @@ const GENERIC_STOPS = new Set(["rpc_error", "error", "failed", "error_during_exe
 const ROWLESS_STOPS = new Set(["shutdown_timeout", "auth_required", "update_required", "spawn_error", "rpc_error"]);
 /** Causes the server writes itself, by fixed code. */
 const FIXED_CAUSES: ReadonlyArray<[RegExp, string]> = [
+  [/ran out of memory while \d+ tasks? ran at once/, "out_of_memory"],
   [/^no activity for \d+ minutes — the turn was stopped$/, "stalled"],
   [/^turn interrupted — OpenMausBot restarted$/, "restart"],
   [/could not start — /, "could_not_start"],

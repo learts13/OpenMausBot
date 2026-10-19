@@ -29,6 +29,7 @@ import { extractSteerImages } from "../turn-images.ts";
 import type { UsageTrigger } from "../usage-ledger.ts";
 import { bulkDeleteThreadIds, type BulkDeleteRefusal } from "./bulk-delete.ts";
 import { PASS, type RouteHandler } from "./table.ts";
+import { sawThread } from "../thread-presence.ts";
 
 export type MessagePage = { messages: Array<Message | Record<string, unknown>>; hasMore?: boolean; activeLeafId: string | null };
 
@@ -259,6 +260,7 @@ export function createChannelRoutes(deps: ChannelRouteDeps): RouteHandler {
     if (m && method === "POST") {
       const room = store.group(m[1]);
       if (!room) return json(res, 404, { error: "no such room" });
+      sawThread(room.threadId);
       const group = store.patchGroup(room.id, { unread: false, ...readCursor(room.threadId) })!;
       broadcast({ kind: "group", group: publicGroupState(group) });
       return json(res, 200, { group: publicGroupState(group) });

@@ -23,6 +23,7 @@ import { sectionKey, type BotRecord, type Store } from "../store.ts";
 import { teamComputerAssignment, teamComputerCreate, teamComputerOwner, type TeamComputerRecord, type TeamComputers } from "../team-computers.ts";
 import * as vps from "../vps-computer.ts";
 import type { BusyFlag, RemoteComputerProvider } from "./config.ts";
+import { createComputerFramesRoutes } from "./computer-frames.ts";
 import { createComputerUsageRoutes } from "./computer-usage.ts";
 import { PASS, type RouteHandler } from "./table.ts";
 
@@ -81,8 +82,10 @@ export function createComputerRoutes(deps: ComputerRouteDeps): RouteHandler {
     claimManagedVpsMutation, cloudComputerUsed,
   } = deps;
   const usage = createComputerUsageRoutes(deps);
+  const frames = createComputerFramesRoutes(deps);
   return async (context) => {
     if (await usage(context) !== PASS) return;
+    if (await frames(context) !== PASS) return;
     const { req, res, url, path, method, auth, json, readBody } = context;
     const routines = deps.routines();
     let m: RegExpMatchArray | null = null;

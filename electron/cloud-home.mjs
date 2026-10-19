@@ -1,6 +1,8 @@
 // A pairing code lives in main-process memory for one navigation: never persisted, never sent to a renderer, only in a link's hash.
 import environments from "./environments.cjs";
 
+export { createCloudPowerGate, openSleepingCloud } from "./cloud-power.mjs";
+
 export const CLOUD_HOME_NAME = "My Cloud";
 export const CLOUD_MACHINE_STATUSES = Object.freeze(["provisioning", "ready", "stopped", "payment-problem", "failed"]);
 export const CLOUD_MACHINE_CONNECTABLE = Object.freeze(["ready"]);
@@ -27,6 +29,12 @@ export const CLOUD_UNREACHABLE_CAUSES = Object.freeze(["host", "no_answer"]);
 const GB = 1024 ** 3;
 const record = value => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 const moment = value => Number.isSafeInteger(value) && value > 0;
+const POWER_STATES = Object.freeze(["awake", "asleep", "waking"]);
+/** The Admin sends `cloud.power` only for a Cloud whose plan sleeps when idle. */
+export function parseCloudPower(input) {
+  if (!record(input) || !POWER_STATES.includes(input.state) || !moment(input.since) || input.sleeps !== true) return null;
+  return { state: input.state, since: input.since, sleeps: true };
+}
 const wholeGb = value => Number.isSafeInteger(value) && value >= 1 && value <= 10_000;
 
 /** A malformed summary is no machine, never a partly trusted one; a malformed optional extra is dropped. */
@@ -43,7 +51,8 @@ export function parseCloudSummary(input) {
     ? { gb: input.disk.gb, maxGb: input.disk.maxGb } : null;
   const unreachable = status === "ready" && record(input.unreachable) && CLOUD_UNREACHABLE_CAUSES.includes(input.unreachable.cause) && moment(input.unreachable.since)
     ? { cause: input.unreachable.cause, since: input.unreachable.since } : null;
-  return { status, ...(origin ? { origin } : {}), ...(setup ? { setup } : {}), ...(retryAt ? { retryAt } : {}), ...(disk ? { disk } : {}), ...(unreachable ? { unreachable } : {}) };
+  const power = parseCloudPower(input.power);
+  return { status, ...(origin ? { origin } : {}), ...(setup ? { setup } : {}), ...(retryAt ? { retryAt } : {}), ...(disk ? { disk } : {}), ...(unreachable ? { unreachable } : {}), ...(power ? { power } : {}) };
 }
 
 const UNREACHABLE_TEXT = Object.freeze({
@@ -94,7 +103,7 @@ const label = value => typeof value === "string" && value.trim().length > 0 && v
 function planAllowances(input) {
   if (!record(input) || !["cpus", "memoryMb", "diskGb", "maxDiskGb", "computers", "computerHours", "voiceCharacters"].every(key => count(input[key]))) return null;
   return { cpus: input.cpus, memoryMb: input.memoryMb, diskGb: input.diskGb, maxDiskGb: Math.max(input.maxDiskGb, input.diskGb),
-    computers: input.computers, computerHours: input.computerHours, voiceCharacters: input.voiceCharacters };
+    computers: input.computers, computerHours: input.computerHours, voiceCharacters: input.voiceCharacters, ...(input.sleeps === true ? { sleeps: true } : {}) };
 }
 /** Monthly price before tax in US cents; a plan without one is not sold here. */
 function offerPlan(input) {

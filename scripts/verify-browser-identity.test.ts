@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { expectedUserAgent } from "./testing/browser-identity-probe.ts";
-import { completeHints } from "./verify-browser-identity.ts";
+import { completeHints, headerLanguages } from "./verify-browser-identity.ts";
 
 const MAC = {
   architecture: "arm", bitness: "64", brands: [{ brand: "Chromium", version: "153" }], formFactors: ["Desktop"],
@@ -22,5 +22,11 @@ describe("the identity checks", () => {
     expect(expectedUserAgent("153", "darwin")).toBe("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36");
     expect(expectedUserAgent("155", "win32")).toBe("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36");
     expect(expectedUserAgent("155", "linux")).toBe("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36");
+  });
+
+  it("compare navigator.languages with the header's languages, without q-values", () => {
+    expect(headerLanguages("en-US,en;q=0.9")).toBe("en-US,en");
+    expect(headerLanguages("pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7")).toBe("pt-BR,pt,en-US,en");
+    expect(headerLanguages(undefined)).toBe("");
   });
 });

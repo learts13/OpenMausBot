@@ -5,11 +5,13 @@ import { CalendarSidebar } from "@/components/routines/CalendarSidebar";
 import type { CalendarCall } from "@/lib/calendar-calls";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
-import { addDays, calendarRangeLabel, projectedRoutineItems, scheduleAt, startOfDay, startOfWeek } from "@/lib/routine-calendar";
+import { addDays, calendarRangeLabel, projectCalls, projectedRoutineItems, scheduleAt, startOfDay, startOfWeek } from "@/lib/routine-calendar";
+import { resetMarkers, useEngineLimits, type ResetMarker } from "@/lib/limit-resets";
 import { automationsFrom, automationStatus } from "@/lib/automations";
 import type { RoutineRun } from "@/lib/routines";
 import { api, useStore } from "@/state/store";
-import { CalendarGrid, EventDetails, EventEditor, projectCalls, QuickComposer, type CalendarEventItem, type EventKind, type EventSeed } from "../RoutineCalendarPage";
+import { CalendarGrid, EventDetails, EventEditor, QuickComposer, type CalendarEventItem, type EventKind, type EventSeed } from "../RoutineCalendarPage";
+import type { ResetDrop } from "../routines/LimitResetMarkers";
 
 /** The schedules (and scheduled calls) on a week or day grid. An automation opens the same panel as the list; a call
  * keeps its own details. */
@@ -31,6 +33,7 @@ export function AutomationsCalendar({ botFilter, selectedAutomationId, onOpenAut
   const visibleBots = state.bots.filter((bot) => !bot.hidden);
   const rangeStart = days === 7 ? startOfWeek(anchor) : startOfDay(anchor);
   const rangeEnd = addDays(rangeStart, days);
+  const markers = resetMarkers(useEngineLimits(), rangeStart, rangeEnd);
 
   const loadCalls = useCallback(async () => {
     try { setCalls((await api("/api/calendar-calls")).calls ?? []); }
@@ -83,6 +86,22 @@ export function AutomationsCalendar({ botFilter, selectedAutomationId, onOpenAut
       setError(cause instanceof Error ? cause.message : String(cause));
     }
   };
+  /** A bot dropped on a reset opens the quick composer for a limit-reset automation; an automation dropped there runs
+   * at that reset instead of its time. */
+  const dropOnReset = async (drop: ResetDrop, marker: ResetMarker) => {
+    if ("botId" in drop) {
+      setSelected(null);
+      setQuick({ kind: "routine", at: marker.at, durationMinutes: 30, botIds: [drop.botId], limitReset: { engine: marker.engine } });
+      return;
+    }
+    if (drop.event.kind !== "routine") return setError(t("limits.callNotOnReset"));
+    try {
+      const response = await api(`/api/routines/${drop.event.id}`, { method: "PATCH", body: JSON.stringify({ schedule: { type: "limit_reset", engine: marker.engine, repeat: "once" } }) });
+      dispatch({ type: "routinePatched", routine: response.routine });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  };
   const resizeEvent = async (item: CalendarEventItem, durationMinutes: number) => {
     try {
       if (item.kind === "routine" && item.routine) {
@@ -121,7 +140,8 @@ export function AutomationsCalendar({ botFilter, selectedAutomationId, onOpenAut
         <CalendarGrid anchor={rangeStart} days={days} items={items} bots={state.bots} groups={state.groups} selectedId={selectedId}
           onOpen={openItem}
           onCreate={(seed) => { setSelected(null); setQuick(seed); }}
-          onMove={(item, at) => void moveEvent(item, at)} onResize={(item, duration) => void resizeEvent(item, duration)} />
+          onMove={(item, at) => void moveEvent(item, at)} onResize={(item, duration) => void resizeEvent(item, duration)}
+          markers={markers} onDropOnReset={(drop, marker) => void dropOnReset(drop, marker)} />
         {liveSelected && (
           <div className="absolute inset-y-0 right-0 z-30 flex shadow-2xl @min-[760px]/routines:static @min-[760px]/routines:shadow-none">
             <EventDetails key={`${liveSelected.kind}:${liveSelected.id}`} item={liveSelected} bots={state.bots} onClose={() => setSelected(null)} onEdit={editSelected} onOpenRun={openRun}

@@ -28,7 +28,7 @@ export interface CloudLendingState {
   busy: boolean;
   connected?: boolean;
   /** Why lending is not connected, for localized copy. */
-  problem?: "connect-first" | "not-cloud" | "waiting" | "paused" | "signed-out" | "account-changed" | "machine-changed" | "access-off";
+  problem?: "connect-first" | "not-cloud" | "waiting" | "paused" | "asleep" | "signed-out" | "account-changed" | "machine-changed" | "access-off";
   error?: string;
   /** Lent through Settings → Servers → Computer access rather than this switch; that grant may include the terminal. */
   via?: "access";
@@ -73,6 +73,8 @@ export function createComputerSharing(options: {
   /** Signs this app back in to the person's own Cloud after its session there ended; true when it did. */
   reconnect?: ((origin: string) => Promise<boolean> | boolean) | null;
   now?: () => number;
+  /** My Cloud's power gate: lending to it waits, calling nothing, while it sleeps. */
+  power?: import("./cloud-power.mjs").CloudPowerGate;
   onChange?: (summary: { lending: string[]; busy: { env: string; action: string } | null }) => void;
 }): {
   state(id: string): SharingState;
@@ -84,6 +86,7 @@ export function createComputerSharing(options: {
   revoke(env: Workspace): SharingState;
   forget(env: Workspace): void;
   cloudState(env: Workspace | null | undefined): CloudLendingState;
+  lendingToCloud(): boolean;
   saveCloud(env: Workspace, input: { folders: unknown; screen?: boolean }): Promise<CloudLendingState>;
   cloudChanged(): void;
   start(options?: { maintainer?: boolean }): void;

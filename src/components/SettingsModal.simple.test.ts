@@ -65,6 +65,7 @@ vi.mock("./UsageSection", () => ({ UsageSection: marker("usage") }));
 vi.mock("./WorkspaceBackupSettings", () => ({ WorkspaceBackupSettings: marker("backups") }));
 vi.mock("./RoomTurnTimeoutSettings", () => ({ RoomTurnTimeoutSettings: () => null }));
 vi.mock("./CompanyBackupSettings", () => ({ CompanyBackupSettings: () => null }));
+vi.mock("./ImportSettings", () => ({ ImportSettings: marker("import") }));
 
 const desktop = { ogb: { environments: {}, organization: {}, cloudAccount: {} } };
 
@@ -93,15 +94,15 @@ const blocks = (html: string) => [...html.matchAll(/data-settings-block="([^"]+)
 const markers = (html: string) => [...html.matchAll(/MARKER:([^;]+);/g)].map((match) => match[1]);
 
 describe("Settings in Simple mode", () => {
-  it("draws at most five pages on the desktop, and none of the Advanced-only ones", () => {
+  it("draws at most six pages on the desktop, MausBot Cloud among them, and none of the Advanced-only ones", () => {
     const html = render();
-    expect(pages(html)).toEqual(["general", "appearance", "ai", "computers", "account"]);
-    expect(SIMPLE_PAGES.length).toBeLessThanOrEqual(5);
+    expect(pages(html)).toEqual(["general", "appearance", "ai", "computers", "cloud", "account"]);
+    expect(SIMPLE_PAGES.length).toBeLessThanOrEqual(6);
     expect(html).not.toContain("data-settings-group=");
     expect(html).not.toContain("data-settings-section=");
     for (const hidden of ["usage", "backups", "experimental", "workspaces", "skills"]) expect(html).not.toContain(`value="${hidden}"`);
     const picker = html.match(/<select aria-label="Settings"[\s\S]*?<\/select>/)![0];
-    expect([...picker.matchAll(/<option value="([^"]+)"/g)].map((match) => match[1])).toEqual(["general", "appearance", "ai", "computers", "account"]);
+    expect([...picker.matchAll(/<option value="([^"]+)"/g)].map((match) => match[1])).toEqual(["general", "appearance", "ai", "computers", "cloud", "account"]);
   });
 
   it("files every Advanced page under one Simple page, or hides it", () => {
@@ -141,11 +142,16 @@ describe("Settings in Simple mode", () => {
     expect(html).toContain('aria-label="Enable the built-in browser"');
   });
 
-  it("stacks OMB Cloud and Organization on Account in the desktop app", () => {
+  it("gives MausBot Cloud its own page, and stacks Organization and Import on Account in the desktop app", () => {
     fixture.section = "cloudAccount";
-    const html = render();
+    let html = render();
+    expect(currentPage(html)).toBe("cloud");
+    expect(blocks(html)).toEqual(["cloudAccount"]);
+    fixture.section = "organization";
+    html = render();
     expect(currentPage(html)).toBe("account");
-    expect(blocks(html)).toEqual(["cloudAccount", "organization"]);
+    expect(blocks(html)).toEqual(["organization", "import"]);
+    expect(markers(html)).toContain("import");
   });
 
   it("adds People and Activity to Account for a hosted workspace's admins in a browser", () => {
@@ -183,8 +189,9 @@ describe("Settings in Simple mode", () => {
     ["remote", "computers"],
     ["desktopWorkspaces", "computers"],
     ["computer", "computers"],
-    ["cloudAccount", "account"],
+    ["cloudAccount", "cloud"],
     ["organization", "account"],
+    ["import", "account"],
   ])("lands a deep link to %s on %s", (section, page) => {
     fixture.section = section;
     const html = render();
@@ -199,7 +206,7 @@ describe("Settings in Simple mode", () => {
   ])("opens a hidden page (%s) for as long as it is the open one", (section, content) => {
     fixture.section = section;
     const html = render();
-    expect(pages(html)).toEqual(["general", "appearance", "ai", "computers", "account", section]);
+    expect(pages(html)).toEqual(["general", "appearance", "ai", "computers", "cloud", "account", section]);
     expect(currentPage(html)).toBe(section);
     if (content === "skillAuthoring") expect(html).toContain("Bots may write their own skills");
     else expect(markers(html)).toContain(content);

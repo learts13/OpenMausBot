@@ -65,8 +65,11 @@ import {
   startOfDay,
   toLocalDateInput,
   toLocalTimeInput,
+  type CallOccurrence,
   type RoutineCalendarItem,
 } from "@/lib/routine-calendar";
+import { limitResetWhen, type ResetMarker } from "@/lib/limit-resets";
+import { LimitResetFields, type LimitResetChoice } from "./routines/LimitResetFields";
 import { DAY_NAMES, durationLabel, intervalLabel, niceDate, niceTime, scheduleLabel } from "@/lib/schedule-label";
 import { Select } from "./Select";
 import {
@@ -90,23 +93,15 @@ const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
 const WEEKDAYS = [1, 2, 3, 4, 5];
 const INTERVAL_PRESETS = [5, 10, 15, 30, 60];
 const EVENT_DURATION_OPTIONS = Array.from({ length: 240 / CALENDAR_SLOT_MINUTES }, (_, index) => (index + 1) * CALENDAR_SLOT_MINUTES);
-const BOT_DRAG_TYPE = "application/x-openmaus-bot";
-const EVENT_DRAG_TYPE = "application/x-openmaus-calendar-event";
+import { BOT_DRAG_TYPE, EVENT_DRAG_TYPE, LimitResetMarker, type ResetDrop } from "./routines/LimitResetMarkers";
 
 export type EventKind = "routine" | "call";
 export type RoutinesLayout = "day" | "week" | "list";
 type CalendarRecurrenceChoice = "none" | "daily" | "weekdays" | "weekly" | "custom";
-type RecurrenceChoice = CalendarRecurrenceChoice | "interval" | CronChoice;
+type RecurrenceChoice = CalendarRecurrenceChoice | "interval" | "limit_reset" | CronChoice;
 type IntervalDayChoice = "every-day" | "weekdays" | "custom";
 type IntervalWindowChoice = "all-day" | "custom";
 type IntervalEndChoice = "never" | "on-date";
-
-type CallOccurrence = {
-  id: string;
-  at: number;
-  durationMinutes: number;
-  call: CalendarCall;
-};
 
 export type CalendarEventItem =
   | ({ kind: "routine" } & RoutineCalendarItem)
@@ -120,6 +115,8 @@ export type EventSeed = {
   name?: string;
   description?: string;
   resultsThreadId?: string | null;
+  /** Dropped on an engine's reset marker: it runs when that limit resets, not at `at`. */
+  limitReset?: { engine: string };
   anchor?: { x: number; y: number };
   routine?: Routine;
   call?: CalendarCall;
@@ -175,6 +172,7 @@ function endOfLocalDate(dateInput: string): number {
 }
 function recurrenceFor(schedule: RoutineSchedule | CalendarCall["schedule"], at: number): RecurrenceChoice {
   if (schedule.type === "once") return "none";
+  if (schedule.type === "limit_reset") return "limit_reset";
   if (schedule.type === "interval") return "interval";
   if (schedule.type === "cron") return cronChoiceFor(schedule);
   if (schedule.weekdays.length === 7) return "daily";
@@ -196,7 +194,7 @@ function makeCalendarSchedule(choice: CalendarRecurrenceChoice, at: number, week
 }
 
 function makeRoutineSchedule(
-  choice: Exclude<RecurrenceChoice, CronChoice>,
+  choice: Exclude<RecurrenceChoice, CronChoice | "limit_reset">,
   at: number,
   weekdays: number[],
   everyMinutes: number,
@@ -209,26 +207,6 @@ function makeRoutineSchedule(
 ): RoutineScheduleInput {
   if (choice === "interval") return { type: "interval", everyMinutes, ...interval };
   return makeCalendarSchedule(choice, at, weekdays);
-}
-
-export function projectCalls(calls: CalendarCall[], from: number, to: number): CallOccurrence[] {
-  const items: CallOccurrence[] = [];
-  for (const call of calls) {
-    if (call.schedule.type === "once") {
-      if (call.schedule.at >= from && call.schedule.at < to) {
-        items.push({ id: `call-${call.id}-${call.schedule.at}`, at: call.schedule.at, durationMinutes: call.durationMinutes, call });
-      }
-      continue;
-    }
-    for (let day = startOfDay(from); day < to; day = addDays(day, 1)) {
-      if (!call.schedule.weekdays.includes(new Date(day).getDay())) continue;
-      const at = atLocalTime(day, call.schedule.time);
-      if (at >= from && at < to && at >= call.createdAt) {
-        items.push({ id: `call-${call.id}-${at}`, at, durationMinutes: call.durationMinutes, call });
-      }
-    }
-  }
-  return items.sort((left, right) => left.at - right.at);
 }
 
 function statusState(status: RoutineRunStatus): MausState {
@@ -363,7 +341,8 @@ export function EventEditor({
   const [overlap, setOverlap] = useState<"skip" | "queue">(existingRoutine?.overlap ?? "skip");
   const [continuity, setContinuity] = useState(Boolean(existingRoutine?.continuity));
   const [runOnStartup, setRunOnStartup] = useState(Boolean(existingRoutine?.runOnStartup));
-  const [recurrence, setRecurrence] = useState<RecurrenceChoice>(recurrenceFor(schedule, initialAt));
+  const [recurrence, setRecurrence] = useState<RecurrenceChoice>(seed.limitReset ? "limit_reset" : recurrenceFor(schedule, initialAt));
+  const [limitReset, setLimitReset] = useState<LimitResetChoice>(schedule.type === "limit_reset" ? schedule : { engine: seed.limitReset?.engine ?? "", repeat: "once" });
   const [cronDraft, setCronDraft] = useState(() => cronDraftFor(schedule.type === "cron" ? schedule : undefined, initialAt));
   const [cronChanged, setCronChanged] = useState(false);
   const [weekdays, setWeekdays] = useState(schedule.type === "daily" ? schedule.weekdays : [new Date(initialAt).getDay()]);
@@ -514,7 +493,8 @@ export function EventEditor({
         if (recurrence === "interval" && intervalEndsAt != null && intervalEndsAt < nextIntervalForSave(savedAt, intervalMinutes, existingIntervalSchedule)) {
           throw new Error("Choose an end date after the first run.");
         }
-        const nextSchedule = isCronChoice(recurrence) ? cron?.schedule : makeRoutineSchedule(recurrence, at, weekdays, intervalMinutes, {
+        const limitEngine = limitReset.engine || bots.find((bot) => bot.id === (lockedBotId ?? botIds[0]))?.modelSelection?.instanceId || "";
+        const nextSchedule = recurrence === "limit_reset" ? { type: "limit_reset" as const, engine: limitEngine, repeat: limitReset.repeat } : isCronChoice(recurrence) ? cron?.schedule : makeRoutineSchedule(recurrence, at, weekdays, intervalMinutes, {
           anchorAt: intervalAnchorAt,
           weekdays: selectedIntervalWeekdays ? [...selectedIntervalWeekdays].sort() : null,
           window: selectedIntervalWindow ?? null,
@@ -541,7 +521,7 @@ export function EventEditor({
         const response = await editorRequest(existingRoutine ? `/api/routines/${existingRoutine.id}` : "/api/routines", { method: existingRoutine ? "PATCH" : "POST", body: JSON.stringify(input) });
         dispatch({ type: "routinePatched", routine: response.routine });
       } else {
-        if (recurrence === "interval" || isCronChoice(recurrence)) throw new Error("Choose a supported call schedule.");
+        if (recurrence === "interval" || recurrence === "limit_reset" || isCronChoice(recurrence)) throw new Error("Choose a supported call schedule.");
         const nextSchedule = makeCalendarSchedule(recurrence, at, weekdays);
         const input: CalendarCallInput = {
           name,
@@ -595,7 +575,7 @@ export function EventEditor({
   const kindSwitchControl = canSwitchKind && (
             <div className={cn(advanced && "ml-10", "inline-flex rounded-lg bg-inset p-1")}>
               <button type="button" onClick={() => { setKind("routine"); setBotIds((ids) => ids.slice(0, 1)); }} className={cn("rounded-md px-4 py-1.5 text-[12.5px] font-medium", kind === "routine" ? "bg-raised text-ink shadow" : "text-ink-secondary")}>{t("routines.kind.routine")}</button>
-              <button type="button" onClick={() => { setKind("call"); if (recurrence === "interval" || isCronChoice(recurrence)) setRecurrence("none"); }} className={cn("rounded-md px-4 py-1.5 text-[12.5px] font-medium", kind === "call" ? "bg-raised text-ink shadow" : "text-ink-secondary")}>{t("routines.kind.call")}</button>
+              <button type="button" onClick={() => { setKind("call"); if (recurrence === "interval" || recurrence === "limit_reset" || isCronChoice(recurrence)) setRecurrence("none"); }} className={cn("rounded-md px-4 py-1.5 text-[12.5px] font-medium", kind === "call" ? "bg-raised text-ink shadow" : "text-ink-secondary")}>{t("routines.kind.call")}</button>
             </div>
           );
   const routineTypeControl = kind === "routine" && !lockedBotId && (
@@ -621,7 +601,7 @@ export function EventEditor({
               </div>
             </div>
           );
-  const whenControls = recurrence !== "interval" && !isCronChoice(recurrence) && (
+  const whenControls = recurrence !== "interval" && recurrence !== "limit_reset" && !isCronChoice(recurrence) && (
                 <div className="flex flex-wrap items-center gap-2">
                   {kind === "routine" && recurrence === "none" && <span className="text-[12px] font-medium text-ink-secondary">Starts</span>}
                   {kind === "routine" && recurrence === "weekly" && <span className="text-[12px] font-medium text-ink-secondary">On</span>}
@@ -647,12 +627,14 @@ export function EventEditor({
                   <option value="weekly">Weekly on {DAY_NAMES[new Date(at).getDay()]}</option>
                   <option value="custom">Selected weekdays</option>
                   {kind === "routine" && <><option value="monthly">Monthly</option><option value="yearly">Yearly</option><option value="cron">Custom cron (advanced)</option></>}
+                  {kind === "routine" && <option value="limit_reset">{t("routines.limitReset.option")}</option>}
                 </Select>
               </div>
   );
   const scheduleNote = kind === "routine" && <RoutineScheduleNote />;
   const repeatDetails = (
     <>
+              {recurrence === "limit_reset" && kind === "routine" && <LimitResetFields value={limitReset} botEngine={bots.find((bot) => bot.id === (lockedBotId ?? botIds[0]))?.modelSelection?.instanceId} onChange={setLimitReset} />}
               {isCronChoice(recurrence) && kind === "routine" && cron && <CronScheduleFields choice={recurrence} value={cronDraft} onChange={(draft) => { setCronDraft(draft); setCronChanged(true); }} runs={cron.runs} error={cron.error} />}
               {recurrence === "custom" && (
                 <div className="flex flex-wrap gap-1.5">
@@ -1064,7 +1046,7 @@ export function QuickComposer({
   onSavedCall: (call: CalendarCall) => void;
 }) {
   const { dispatch } = useStore();
-  const [kind, setKind] = useState<EventKind>(routinesOnly ? "routine" : seed.kind);
+  const [kind, setKind] = useState<EventKind>(routinesOnly || seed.limitReset ? "routine" : seed.kind);
   const [name, setName] = useState(seed.name ?? "");
   const [description, setDescription] = useState(seed.description ?? "");
   const [botIds, setBotIds] = useState(seed.botIds.length ? seed.botIds : bots[0] ? [bots[0].id] : []);
@@ -1116,7 +1098,7 @@ export function QuickComposer({
             botId: botIds[0],
             runOn: "maus",
             enabled: true,
-            schedule: { type: "once", at: seed.at },
+            schedule: seed.limitReset ? { type: "limit_reset", engine: seed.limitReset.engine, repeat: "once" } : { type: "once", at: seed.at },
             durationMinutes,
             attachments: [],
             resultsThreadId,
@@ -1153,7 +1135,7 @@ export function QuickComposer({
       </div>
       <div className="space-y-3 p-4">
         <input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="Add title" onKeyDown={(event) => { if (event.key === "Enter" && valid) void save(); }} className="w-full border-b border-hairline/60 bg-transparent pb-2 text-[18px] font-medium text-ink outline-none placeholder:text-ink-tertiary focus:border-accent" />
-        {!routinesOnly && (
+        {!routinesOnly && !seed.limitReset && (
           <div className="flex items-center gap-1 border-b border-hairline/35 pb-2">
             <button type="button" onClick={() => { setKind("routine"); setBotIds((ids) => ids.slice(0, 1)); }} className={cn("rounded-lg px-3 py-1.5 text-[12px] font-medium", kind === "routine" ? "bg-accent/15 text-accent" : "text-ink-secondary hover:bg-raised hover:text-ink")}>{t("routines.kind.routine")}</button>
             <button type="button" onClick={() => setKind("call")} className={cn("rounded-lg px-3 py-1.5 text-[12px] font-medium", kind === "call" ? "bg-accent/15 text-accent" : "text-ink-secondary hover:bg-raised hover:text-ink")}>{t("routines.kind.call")}</button>
@@ -1161,7 +1143,7 @@ export function QuickComposer({
         )}
         <div className="flex items-start gap-3 text-[12.5px] text-ink">
           <Clock3 size={16} className="mt-0.5 shrink-0 text-ink-secondary" />
-          <div><div>{niceDate(seed.at)}</div><div className="mt-0.5 text-ink-secondary">{niceTime(seed.at)}{kind === "call" ? ` – ${niceTime(seed.at + durationMinutes * 60_000)}` : ""}</div></div>
+          {seed.limitReset ? <div data-testid="quick-limit-reset">{limitResetWhen({ engine: seed.limitReset.engine, repeat: "once" })}</div> : <div><div>{niceDate(seed.at)}</div><div className="mt-0.5 text-ink-secondary">{niceTime(seed.at)}{kind === "call" ? ` – ${niceTime(seed.at + durationMinutes * 60_000)}` : ""}</div></div>}
         </div>
         <div className="flex items-start gap-3">
           <UserRoundPlus size={16} className="mt-2.5 shrink-0 text-ink-secondary" />
@@ -1316,10 +1298,14 @@ export function CalendarGrid({
   onCreate,
   onMove,
   onResize,
+  markers = [],
+  onDropOnReset,
 }: {
   anchor: number;
   days: number;
   items: CalendarEventItem[];
+  markers?: ResetMarker[];
+  onDropOnReset?: (drop: ResetDrop, marker: ResetMarker) => void;
   bots: Bot[];
   groups: Group[];
   selectedId?: string;
@@ -1418,6 +1404,7 @@ export function CalendarGrid({
               {start === today && <div className="pointer-events-none absolute inset-x-0 z-20 flex items-center" style={{ top: nowTop }}><span className="-ml-1 size-2 rounded-full bg-danger" /><span className="h-px flex-1 bg-danger/80" /></div>}
               {selected && <div className="pointer-events-none absolute inset-x-1 z-10 rounded-md border border-accent/70 bg-accent/20" style={{ top: ((new Date(selected.start).getHours() * 60 + new Date(selected.start).getMinutes()) / 60) * HOUR_HEIGHT, height: Math.max(16, ((selected.end - selected.start) / 3_600_000) * HOUR_HEIGHT) }} />}
               {preview && <div className="pointer-events-none absolute inset-x-1 z-20 rounded-md border border-accent/80 bg-accent/25 shadow-sm" style={{ top: ((new Date(preview.at).getHours() * 60 + new Date(preview.at).getMinutes()) / 60) * HOUR_HEIGHT, height: HOUR_HEIGHT / 2 }}><div className="px-2 py-1 text-[9.5px] font-medium text-accent">{niceTime(preview.at)}</div></div>}
+              {markers.filter((marker) => startOfDay(marker.at) === start).map((marker) => <LimitResetMarker key={marker.engine} marker={marker} hourHeight={HOUR_HEIGHT} onDrop={onDropOnReset && ((drop) => onDropOnReset(drop, marker))} />)}
               {dayItems.map((item) => <CalendarEventCard key={item.id} item={item} bots={bots} groups={groups} compact={days === 7} layout={collisionLayouts.get(item.id) ?? { column: 0, columns: 1 }} selected={item.id === selectedId} onOpen={() => onOpen(item)} onResize={(minutes) => onResize(item, minutes)} />)}
             </div>
           );

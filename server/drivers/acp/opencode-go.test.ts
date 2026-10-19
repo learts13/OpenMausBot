@@ -971,9 +971,10 @@ describe("OpenCode session variants", () => {
   it("reapplies an explicit choice on resume and targets only its native session", async () => {
     const f = await fixture({ [model]: variantConfig(["low", "high"]) });
     expect((await f.run({ variant: "high" })).done).toMatchObject({ ok: true });
+    const before = f.calls().length;
     const { done, events } = await f.run({ threadId: "resumed-thread", resumeCursor: "native-resumed", variant: "high" });
     expect(done).toMatchObject({ ok: true, threadId: "resumed-thread" });
-    expect(f.calls().map((entry) => entry.params)).toEqual([{ sessionId: "native-resumed", configId: "effort", value: "high" }]);
+    expect(f.calls().slice(before).map((entry) => entry.params)).toEqual([{ sessionId: "native-resumed", configId: "effort", value: "high" }]);
     expect(events.filter((event) => event.type === "session.model-variants").every((event) => event.threadId === "resumed-thread")).toBe(true);
   });
 

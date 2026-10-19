@@ -239,7 +239,6 @@
   "sidebar.noMatch": "Rien ne correspond à « {query} »",
   "sidebar.preview.waiting": "En attente de vous…",
   "sidebar.preview.working": "En cours…",
-  "sidebar.preview.screenFrame": "Image d'écran",
   "sidebar.preview.botWorking": "{name} travaille…",
   "sidebar.preview.aBot": "Un bot",
   "sidebar.preview.teamWorking": "L'équipe travaille…",

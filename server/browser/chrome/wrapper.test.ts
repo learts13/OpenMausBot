@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 
 import { removeTempDir } from "../../testing/cleanup.ts";
-import { batchQuote, browserLanguage, browserTimeZone, launcherFlags, launcherPath, launcherScript, primaryScreen, writeLauncher, type LauncherSettings } from "./wrapper.ts";
+import { batchQuote, browserLanguage, browserTimeZone, languageList, launcherFlags, launcherPath, launcherScript, primaryScreen, writeLauncher, type LauncherSettings } from "./wrapper.ts";
 
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36";
 const posix = process.platform !== "win32";
@@ -105,5 +105,15 @@ describe("the display, language and time zone the launcher gives Chrome", () => 
     expect(browserTimeZone({ TZ: "Asia/Kolkata" }, "win32")).toBeUndefined();
     expect(browserTimeZone({}, "darwin")).toBeUndefined();
     expect(browserTimeZone({ TZ: "Asia/Kolkata'; reboot" }, "linux")).toBeUndefined();
+  });
+});
+
+describe("the languages pages are told", () => {
+  it("lists the person's language, its base and English after, never with q-values", () => {
+    expect(languageList("pt-BR")).toBe("pt-BR,pt,en-US,en");
+    expect(languageList("en-US")).toBe("en-US,en");
+    expect(languageList("en-IN")).toBe("en-IN,en");
+    expect(languageList("de")).toBe("de,en-US,en");
+    expect(languageList(undefined)).toBe("en-US,en");
   });
 });

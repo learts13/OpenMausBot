@@ -17,6 +17,7 @@ import { titleConversationExcerpt, type ThreadTitleSource } from "../thread-titl
 import type { MessagePage } from "./channels.ts";
 import { bulkDeleteThreadIds, type BulkDeleteRefusal } from "./bulk-delete.ts";
 import { PASS, type RouteHandler } from "./table.ts";
+import { sawThread } from "../thread-presence.ts";
 
 type HostedModels = NonNullable<ReturnType<typeof hostedModelPolicy>>;
 
@@ -222,7 +223,9 @@ export function createTaskRoutes(deps: TaskRouteDeps): RouteHandler {
       if (switchLimit === null) return json(res, 400, { error: "messages must be a non-negative whole number" });
       const switched = store.switchTask(bot.id, m[2]);
       if (!switched) return json(res, 404, { error: "no such task" });
-      const switchedSettings = { ...wireBot(switched), tasks: store.tasks(switched.id).map((task) => wireTask(task, switched.modelSelection)) };
+      sawThread(m[2]);
+      const wiredSwitch = wireBot(switched);
+      const switchedSettings = { ...wiredSwitch, tasks: wiredSwitch.tasks ?? [] };
       // "0": settings only; a positive page: that tail; omitted: the whole thread (search hits can be older than a page).
       const responseBot = requestedMessages === "0"
         ? switchedSettings

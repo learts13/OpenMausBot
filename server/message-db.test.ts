@@ -11,6 +11,7 @@ import { closeMessageDb,
   indexedMemoryFiles,
   insertMessage,
   insertNotificationLog,
+  lastRowAt,
   latestPersonLineAts,
   logNotification,
   latestSaidByBot,
@@ -351,6 +352,24 @@ describe("message-db", () => {
     expect(imported.messages.map((m) => m.id)).toEqual(["a", "b", "c"]);
     expect(imported.hasMore).toBeUndefined();
     expect(existsSync(legacy("tail-legacy"))).toBe(false);
+  });
+
+  it("lastRowAt reads the time on the row the Store holds last, without loading the conversation", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const lastAt = () => store.messagesFor(bot.threadId).at(-1)?.at;
+    expect(lastRowAt("never-written")).toBeUndefined();
+    const first = store.appendMessage(bot.threadId, { role: "user", kind: "text", text: "first", at: 5_000 });
+    expect(lastRowAt(bot.threadId)).toBe(lastAt());
+    store.appendMessage(bot.threadId, { role: "bot", kind: "text", text: "earlier clock", at: 1_000 });
+    expect(lastRowAt(bot.threadId)).toBe(1_000);
+    expect(lastRowAt(bot.threadId)).toBe(lastAt());
+    store.insertMessageAfter(bot.threadId, first.id, { role: "bot", kind: "text", text: "inserted" });
+    expect(lastRowAt(bot.threadId)).toBe(lastAt());
+    store.patchMessage(bot.threadId, store.messagesFor(bot.threadId).at(-1)!.id, { at: 7_000 });
+    expect(lastRowAt(bot.threadId)).toBe(7_000);
+    store.branchMessage(bot.threadId, first.id, "edited");
+    expect(lastRowAt(bot.threadId)).toBe(lastAt());
   });
 
   it("Store round-trips branching through the DB across a restart", () => {

@@ -225,6 +225,7 @@ export class BrowserService {
       throw error;
     }
     profile.run = run;
+    profile.lastUsed = Date.now();
     void opened.exited.then(() => this.#exited(profile, run));
     if (profile.reopened?.kind === "idle" || profile.reopened?.kind === "crash") {
       profile.reopened = { ...profile.reopened, pages: profile.tabs.list().filter((tab) => tab.page.url() !== "about:blank").map((tab) => `${tab.id} ${tab.page.url()}`) };
@@ -246,12 +247,11 @@ export class BrowserService {
     for (const off of run.offs) off();
     profile.run = null;
     profile.tabs.clear();
-    if (!run.closing) {
-      profile.reopened = { kind: "crash", pages: [] };
-      profile.control.settle();
-      this.#options.log?.(`browser ${profile.key}: Chrome exited unexpectedly; the next call starts it again`);
-    }
-    profile.hub.stopped(run.closing ? "closed" : "crashed");
+    if (run.closing) return;
+    profile.reopened = { kind: "crash", pages: [] };
+    profile.control.settle();
+    this.#options.log?.(`browser ${profile.key}: Chrome exited unexpectedly; the next call starts it again`);
+    profile.hub.stopped("crashed");
   }
 
   /** Graceful: Chrome's own quit, so its next start reopens the tabs and keeps session cookies. */
@@ -265,7 +265,7 @@ export class BrowserService {
         if (run) {
           run.closing = true;
           for (const off of run.offs) off();
-          profile.hub.stopped("closed");
+          profile.hub.stopped(reopened?.kind === "idle" ? "asleep" : "closed");
           await run.opened.close().catch(() => undefined);
         }
       } finally {
@@ -292,18 +292,18 @@ export class BrowserService {
     for (const folder of ["downloads", "screenshots"]) rmSync(join(root, folder, hash), { recursive: true, force: true });
   }
 
-  #idle(profile: ProfileState, idleMs: number): boolean {
-    return profile.run !== null && !profile.starting && !profile.stopping && profile.calls === 0 && profile.hub.size === 0
+  #unused(profile: ProfileState, idleMs: number): boolean {
+    return profile.run !== null && !profile.starting && !profile.stopping && profile.calls === 0
       && profile.control.owner === null && profile.control.agents === 0 && !this.#lanes.held(profile.key) && Date.now() - profile.lastUsed >= idleMs;
   }
 
-  /** The least recently used idle browser makes room; with none idle, the call waits, then is told why it cannot start. */
+  /** The least recently used unwatched idle browser makes room; with none, the call waits, then is told why it cannot start. */
   async #capacity(profile: ProfileState): Promise<void> {
     const until = Date.now() + this.#options.capacityWaitMs;
     for (;;) {
       const others = this.profiles().filter((other) => other !== profile && (other.run || other.starting));
       if (others.length < this.#options.maxRunning) return;
-      const candidate = others.filter((other) => this.#idle(other, 0)).sort((a, b) => a.lastUsed - b.lastUsed)[0];
+      const candidate = others.filter((other) => other.hub.size === 0 && this.#unused(other, 0)).sort((a, b) => a.lastUsed - b.lastUsed)[0];
       if (candidate) {
         await this.#stop(candidate, { kind: "idle", pages: [] });
         continue;
@@ -313,11 +313,11 @@ export class BrowserService {
     }
   }
 
-  /** Every running browser no one has used for `idleMs` closes; its bot hears why on its next call. */
+  /** Every running browser no one has used for `idleMs` closes, watched or not; its bot hears why on its next call. */
   async closeIdle(idleMs = this.#options.idleMs()): Promise<string[]> {
     const closed: string[] = [];
     for (const profile of this.profiles()) {
-      if (!(idleMs > 0) || !this.#idle(profile, idleMs)) continue;
+      if (!(idleMs > 0) || !this.#unused(profile, idleMs)) continue;
       await this.#stop(profile, { kind: "idle", pages: [] });
       closed.push(profile.key);
     }
@@ -646,6 +646,7 @@ export class BrowserService {
       tabs: () => profile.tabs.list(),
       tab: (id: string) => profile.tabs.get(id),
       running: async () => { await this.running(profile); },
+      used: () => { profile.lastUsed = Date.now(); },
       pageLimit: () => (profile.run && !profile.run.closing ? profile.run.opened.pageLimit ?? null : null),
       take: async (owner: string): Promise<TakeResult> => {
         await this.running(profile);

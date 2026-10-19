@@ -449,6 +449,8 @@ export interface WireMessage {
     claudeUpdate?: boolean;
   /** error rows: the place this turn could not use. */
     place?: PlaceRow;
+    /** error rows: epoch ms when the usage limit that stopped the turn resets. */
+    limitResetsAt?: number;
     /** Provider item identity, scoped to the owning turn. */
     itemId?: string;
     /** Whether the harness captured the full redacted result. Private
@@ -655,9 +657,14 @@ export interface LiveCallRecord {
   title?: string;
 }
 
+/** `live`: the key saved for Live calls only; `openai`: the OpenAI API key from Settings → API keys, used when there is no `live` key. */
+export type LiveKeySource = "live" | "openai";
+
 /** Non-secret Live settings, as GET /api/config and PATCH /api/live/settings report them. */
 export interface LiveSettings {
+  /** A Live call has a key to use (`keySource` says which); never the key itself. */
   configured: boolean;
+  keySource?: LiveKeySource;
   voice: string;
   readTypedReplies: boolean;
   idleMinutes: number;
@@ -908,7 +915,8 @@ export type ServerFrame =
   | { kind: "app-trigger.deleted"; triggerId: string }
   | { kind: "app-trigger.service"; service: AppTriggerService }
   | { kind: "runtime"; event: RuntimeEvent }
-  | { kind: "screen"; botId: string; threadId: string; png: string; mime?: string }
+  /** `surface` names what the frame shows: the bot's desktop (`computer`) or its built-in browser. */
+  | { kind: "screen"; botId: string; threadId: string; png: string; mime?: string; surface?: "browser" | "computer" }
   /** A bot's computer is being set up or woken for a turn; the chat shows
    * one progress line until its first screen frame. `place` names a cloud
    * computer (absent: a Local VM). */

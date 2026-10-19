@@ -100,6 +100,17 @@ describe("the v1 live view on the new browser", () => {
     expect(keys).toContainEqual(expect.objectContaining({ type: "keyUp", key: "Enter" }));
   });
 
+  it("tells a phone its browser closed unused and ends its view for good, so it does not reconnect and start it again", async () => {
+    const { open, service, backend } = setup();
+    const { sse } = await open();
+    await sleep(25);
+    expect(await service.closeIdle(20)).toEqual(["bot:a"]);
+    await sleep(20);
+    expect(sse.events.filter((event) => event.type === "error").map((event) => event.data)).toEqual([{ retryable: false, asleep: true, message: expect.stringContaining("sat unused") }]);
+    expect(sse.writableEnded).toBe(true);
+    expect(backend.chromes).toHaveLength(1);
+  });
+
   it("restarts the browser for the person, closes every view of it, and the bot hears it on its next call", async () => {
     const { open, service, backend } = setup();
     const { sse, action } = await open();

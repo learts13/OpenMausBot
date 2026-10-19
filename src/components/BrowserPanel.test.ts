@@ -145,6 +145,21 @@ describe("the browser panel's connection", () => {
     expect(host.textContent).not.toContain("Starting the browser…");
   });
 
+  it("says the browser closed after it sat unused, opens it again only when asked, and shows it once it runs", async () => {
+    const socket = await streaming("unclaimed");
+    await act(async () => socket.message({ type: "asleep" }));
+    await flush();
+    expect(host.textContent).toContain(t("browser.panel.asleep"));
+    expect(socket.sent).not.toContainEqual({ type: "wake" });
+    await act(async () => button(t("browser.panel.wake")).click());
+    expect(socket.sent).toContainEqual({ type: "wake" });
+    expect(button(t("browser.panel.waking")).disabled).toBe(true);
+    await act(async () => socket.message({ type: "awake" }));
+    await flush();
+    expect(host.textContent).not.toContain(t("browser.panel.asleep"));
+    expect(FakeSocket.instances).toHaveLength(1);
+  });
+
   it("shows the tab's address and enables history from what the stream says", async () => {
     const socket = await streaming();
     expect((host.querySelector<HTMLInputElement>('input[aria-label="Browser address"]')!).value).toBe("https://example.com/");
@@ -171,6 +186,22 @@ describe("a v1 live view whose stream dropped", () => {
     expect(live().url).toBe("/api/bots/pepper/browser/live?resume=old-viewer");
     await emit("ready", { viewerId: "new-viewer" });
     expect(host.textContent).not.toContain("Browser disconnected");
+  });
+
+  it("says the browser closed after it sat unused, and opens a new view only when asked", async () => {
+    fixture.state.config.browserEngine = { kind: "engine", engine: "agent-browser" };
+    await render();
+    await emit("ready", { viewerId: "old-viewer" });
+    await emit("error", { retryable: false, asleep: true, message: "This browser closed after it sat unused, to save memory." });
+    await flush();
+    expect(host.textContent).toContain(t("browser.panel.asleep"));
+    expect(host.textContent).not.toContain("Browser disconnected");
+    await act(async () => { window.dispatchEvent(new Event("focus")); });
+    expect(FixtureEventSource.instances).toHaveLength(1);
+    await act(async () => button(t("browser.panel.wake")).click());
+    await flush();
+    expect(FixtureEventSource.instances).toHaveLength(2);
+    expect(host.textContent).not.toContain(t("browser.panel.asleep"));
   });
 
   it("comes back when the window is focused after its retries ran out", async () => {

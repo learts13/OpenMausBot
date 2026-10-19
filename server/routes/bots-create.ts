@@ -40,6 +40,23 @@ export interface BotCreateRouteDeps {
   wireBot(bot: BotRecord): WireBot;
 }
 
+const OWN_ID = /^[\w-]{8,128}$/;
+
+/** A bot sent from the person's other computer keeps its id and its conversation's, so later sends and Bring newer
+ * chats find it. Only ids in the server's own form, and only while nothing here uses them. */
+export function keptBotIds(body: Record<string, unknown>, store: Pick<Store, "bot" | "botByThread" | "groupByThread">): { id?: string; threadId?: string } | { error: string } {
+  const { id, threadId } = body;
+  if (id === undefined && threadId === undefined) return {};
+  if (typeof id !== "string" || !OWN_ID.test(id) || (threadId !== undefined && (typeof threadId !== "string" || !OWN_ID.test(threadId)))) {
+    return { error: "id and threadId must be ids of letters, digits, - and _ (8 to 128)" };
+  }
+  if (store.bot(id) || store.botByThread(id) || store.groupByThread(id)) return { error: "a bot with this id already exists here" };
+  if (threadId !== undefined && (threadId === id || store.bot(threadId) || store.botByThread(threadId) || store.groupByThread(threadId))) {
+    return { error: "this conversation id is already used here" };
+  }
+  return { id, ...(threadId === undefined ? {} : { threadId }) };
+}
+
 export function createBotCreateRoutes(deps: BotCreateRouteDeps): RouteHandler {
   const {
     store, cfg, presetStore, orgInstallStatuses,
@@ -55,6 +72,10 @@ export function createBotCreateRoutes(deps: BotCreateRouteDeps): RouteHandler {
       if (!body || typeof body !== "object" || Array.isArray(body)) {
         return json(res, 400, { error: "bot must be a JSON object" });
       }
+      const kept = keptBotIds(body, store);
+      if ("error" in kept) return json(res, kept.error.includes("already") ? 409 : 400, { error: kept.error });
+      const { id: _id, threadId: _threadId, ...rest } = body;
+      body = rest;
       const template = resolveBotCreationDefaults(cfg.newBotDefaults, body);
       const settings = template.profile;
       if (auth.kind === "session" && !auth.scopes.includes("admin")) {
@@ -135,9 +156,11 @@ export function createBotCreateRoutes(deps: BotCreateRouteDeps): RouteHandler {
       // Apply the audience before creation can announce the bot to members.
       const created = body.visibility === undefined ? null : parseVisibility(body.visibility);
       if (created && !created.ok) return json(res, 400, { error: created.error });
+      // Checked again beside the synchronous write: an await above let another request take the same id.
+      if (kept.id && "error" in keptBotIds(kept, store)) return json(res, 409, { error: "a bot with this id already exists here" });
       const bot = store.createBot({ ...profile.patch, soul: settings.soul, section, modelSelection: selection,
         toolScope: settings.toolScope ?? undefined,
-        ...(created?.ok ? { visibility: created.visibility } : {}) });
+        ...(created?.ok ? { visibility: created.visibility } : {}) }, kept.id ? { ...kept, seedMessages: false } : {});
       const createdRoutines: Array<{ id: string; enabled: boolean }> = [];
       try {
         const { chiefOfStaff: _chief, managedSections: _managed, toolScope: _toolScope, ...ordinary } = settings;

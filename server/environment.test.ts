@@ -139,4 +139,20 @@ describe("environment identity", () => {
     delete process.env.OMB_APP_VERSION;
     expect(serverVersion()).toMatch(/^\d+\.\d+\.\d+/);
   });
+
+  it("reads the version the bundle carries when no package.json sits beside it, as in the Cloud home image", () => {
+    delete process.env.OMB_APP_VERSION;
+    const image = mkdtempSync(join(tmpdir(), "omb-image-"));
+    dirs.push(image);
+    const bundle = join(image, "dist-server");
+    mkdirSync(bundle);
+    expect(serverVersion(bundle)).toBe("unknown");
+    writeFileSync(join(bundle, "package.json"), '{"type":"module"}\n');
+    expect(serverVersion(bundle)).toBe("unknown");
+    writeFileSync(join(bundle, "package.json"), '{"type":"module","version":"0.1.117"}\n');
+    expect(serverVersion(bundle)).toBe("0.1.117");
+    process.env.OMB_APP_VERSION = "0.1.120";
+    expect(serverVersion(bundle)).toBe("0.1.120");
+    delete process.env.OMB_APP_VERSION;
+  });
 });

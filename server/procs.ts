@@ -12,7 +12,9 @@ import {
 import { existsSync } from "node:fs";
 import type { Readable, Writable } from "node:stream";
 import { join } from "node:path";
+import { engineMemory } from "./engine-memory.ts";
 import { resolveCliSpawn, type ResolvedSpawn } from "./env-path.ts";
+import { OOM_SCORE, spawnWithOomScore } from "./oom-score.ts";
 
 export function resolveCli(cli: string, args: string[] = [], env?: NodeJS.ProcessEnv): ResolvedSpawn {
   return resolveCliSpawn(cli, args, env);
@@ -77,13 +79,17 @@ export function spawnCli(
 ): ChildProcessByStdio<Writable, Readable, Readable> {
   const resolved = resolveCli(cli, args);
   assertSafeCliArgv(resolved);
-  const child = spawn(resolved.command, resolved.args, {
+  const start = () => spawn(resolved.command, resolved.args, {
     ...opts,
     // POSIX: own group so kill(-pid) reaps child MCP servers; Windows: taskkill /T does it.
     ...(process.platform === "win32" ? { windowsHide: true } : { detached: true }),
   }) as ChildProcessByStdio<Writable, Readable, Readable>;
+  const child = owner === "bot" ? spawnWithOomScore(OOM_SCORE.engine, start) : start();
   if (process.platform !== "win32") cliGroups.add(child);
-  if (process.platform !== "win32" && owner === "bot") rememberEngineSession(child);
+  if (process.platform !== "win32" && owner === "bot") {
+    rememberEngineSession(child);
+    engineMemory.track(child);
+  }
 
   // On Windows a stdin write between taskkill and pipe close errors asynchronously; unlistened, that crashes the harness.
   child.stdin?.on("error", () => {});

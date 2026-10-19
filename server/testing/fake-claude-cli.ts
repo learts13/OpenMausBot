@@ -8,6 +8,7 @@
 //   FAKE_CLAUDE_API_ERROR_KIND  the api-error frame's `error` (default: unknown); FAKE_CLAUDE_API_ERROR_STATUS its result's
 //     api_error_status; FAKE_CLAUDE_NO_TERMINAL_REASON=1: the result has no terminal_reason, only stop_reason "stop_sequence"
 //   FAKE_CLAUDE_RATE_LIMIT  JSON rate_limit_info reported in a `rate_limit_event` after init
+//   FAKE_CLAUDE_LIMITED_FILE  path: while it exists, every turn plays usage-limit with the file's JSON rate_limit_info
 //   FAKE_CLAUDE_MCP_FAILED  comma list of MCP servers init reports as failed (`mcp_servers`)
 //   FAKE_CLAUDE_RELEASE  with hang: the turn ends normally once this file exists
 //   FAKE_CLAUDE_DUMP  path for the latest turn's {argv, env, cwd, prompt, systemPrompt, mcpConfig}
@@ -628,7 +629,9 @@ const playTurn = (prompt: JsonValue, late = false) => {
 
   // the real CLI re-announces init on every turn of a live process
   out({ type: "system", subtype: "init", session_id: sessionId, model, permissionMode, tools, ...mcpStatus() });
-  const rateLimit = process.env.FAKE_CLAUDE_RATE_LIMIT ? JSON.parse(process.env.FAKE_CLAUDE_RATE_LIMIT) : null;
+  const limitedFile = process.env.FAKE_CLAUDE_LIMITED_FILE;
+  const limited = limitedFile && existsSync(limitedFile) ? readFileSync(limitedFile, "utf8") : null;
+  const rateLimit = limited !== null ? JSON.parse(limited) : process.env.FAKE_CLAUDE_RATE_LIMIT ? JSON.parse(process.env.FAKE_CLAUDE_RATE_LIMIT) : null;
   if (rateLimit) out({ type: "rate_limit_event", rate_limit_info: rateLimit, session_id: sessionId });
 
   if (lateContinuation && process.env.FAKE_CLAUDE_LATE_STEER_SILENT) {
@@ -644,7 +647,7 @@ const playTurn = (prompt: JsonValue, late = false) => {
 
   const resumedError = process.env.FAKE_CLAUDE_RESUMED_API_ERROR === "1" && argv.includes("--resume") && !resumedErrorPlayed;
   if (resumedError) resumedErrorPlayed = true;
-  if (mode === "usage-limit") {
+  if (mode === "usage-limit" || limited !== null) {
     // captured from 2.1.295 for an account past its weekly limit
     const text = process.env.FAKE_CLAUDE_API_ERROR ?? "You've hit your weekly limit \u00b7 resets Oct 12 at 2:30pm (Asia/Calcutta)";
     out({

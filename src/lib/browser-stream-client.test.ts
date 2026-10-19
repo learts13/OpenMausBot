@@ -110,6 +110,22 @@ describe("preview stream control", () => {
     client.stop();
   });
 
+  it("lets a viewer that only watches wake a browser that closed unused, and passes on that it slept and woke", () => {
+    const onMessage = vi.fn();
+    const client = createPreviewStreamClient(target, events({ onMessage }));
+    const socket = FakeSocket.current;
+    socket.control({ ...agent, controller: "unclaimed" });
+    socket.message(JSON.stringify({ type: "asleep" }));
+    expect(client.send({ type: "wake" })).toBe(true);
+    expect(client.send({ type: "reload" })).toBe(false);
+    socket.message(JSON.stringify({ type: "awake" }));
+    expect(socket.sent).toEqual(['{"type":"wake"}']);
+    expect(onMessage.mock.calls.map(([message]) => message.type)).toEqual(["asleep", "awake"]);
+    socket.control({ ...agent, canOperate: false });
+    expect(client.send({ type: "wake" })).toBe(false);
+    client.stop();
+  });
+
   it("keeps read-only frames flowing while refusing takeover and every mutation", () => {
     const { client, socket, onFrame } = connect();
     socket.control({ ...agent, canOperate: false });

@@ -93,8 +93,7 @@ function workspaceSenderAllowed(event, contents, state, localOrigin) {
 }
 
 /** Native menu choices, never renderer-supplied destinations or callbacks. `iconFor`: a saved colour's small dot, when main can draw one.
- * `places`: the one line saying which side has which bots, shown first; `copyToCloud`: the existing way to bring this
- * computer's bots and chats over. `foldSublabels`: where menus show no sublabels (Windows, Linux), My Cloud's status line
+ * `places`: the one line saying which side has which bots, shown first; `copyToCloud`: the send line under the list. `foldSublabels`: where menus show no sublabels (Windows, Linux), My Cloud's status line
  * joins its name instead of vanishing. */
 function workspaceMenuTemplate(state, { onSwitch, onConnect, onForget, onAddCloud, sublabels = {}, iconFor = null, places = null, copyToCloud = null, foldSublabels = false }) {
   const active = activeEnvironment(state);
@@ -132,18 +131,28 @@ function placesLine({ cloudName = "My Cloud", onCloud, localBots }) {
   return names ? `These bots live on this computer: ${names}. ${cloudName} has its own.` : `This computer has no bots of its own yet. ${cloudName} has its own.`;
 }
 
-/** The switcher's extra options once the person has My Cloud: the places line, the existing way to bring this computer's
- * bots and chats over (Settings → MausBot Cloud), and the Cloud's status beside its name where menus show no sublabels.
- * Bot names come from this computer's own server; when it does not answer at once the line is left out, never guessed. */
-async function placesMenuOptions({ cloud, activeId, platform, port, onCopy,
+/** One line under My Cloud: what of this computer's is not on it yet, with Send (Send to My Cloud, cloud-send.mjs), or
+ * the way to the side-by-side page when nothing waits. */
+function sendLine({ cloudName = "My Cloud", waiting }) {
+  const total = waiting?.total ?? 0, bots = waiting?.bots ?? 0;
+  if (!total) return null;
+  const what = bots ? `${bots === 1 ? "1 bot" : `${bots} bots`}${total > bots ? ` and ${total - bots} more` : ""}` : total === 1 ? "1 change" : `${total} changes`;
+  return `${what} not on ${cloudName} · Send`;
+}
+
+/** The switcher's extra options once the person has My Cloud: the places line, the send line, and the Cloud's status
+ * beside its name where menus show no sublabels. Bot names come from this computer's own server; when it does not
+ * answer at once the line is left out, never guessed. `send`: what waits (main's last comparison) and its actions. */
+async function placesMenuOptions({ cloud, activeId, platform, port, send = null,
   localBots = () => fetch(`http://127.0.0.1:${port}/api/bots`, { signal: AbortSignal.timeout(700) }).then((response) => response.json()) }) {
   const foldSublabels = platform !== "darwin";
   if (!cloud) return { foldSublabels };
   let names = null;
   try { const listed = await localBots(); names = Array.isArray(listed?.bots) ? listed.bots.map((bot) => bot?.name) : null; } catch {}
+  const waiting = sendLine({ cloudName: cloud.name, waiting: send?.waiting });
   return {
     foldSublabels,
-    copyToCloud: { label: `Bring this computer's bots and chats to ${cloud.name}…`, click: onCopy },
+    ...(send ? { copyToCloud: waiting ? { label: waiting, click: send.onSend } : { label: `This computer and ${cloud.name}…`, click: send.onOpen } } : {}),
     ...(names ? { places: placesLine({ cloudName: cloud.name, onCloud: activeId === cloud.id, localBots: names }) } : {}),
   };
 }
@@ -341,6 +350,7 @@ module.exports = {
   workspaceMenuTemplate,
   placesLine,
   placesMenuOptions,
+  sendLine,
   workspaceNavigationAllowed,
   workspaceSenderAllowed,
   workspaceSummary,

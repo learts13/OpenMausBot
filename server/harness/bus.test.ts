@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { EVENTS_DIR, ensureDirs } from "../config.ts";
+import { addHeldSecretScrubber } from "../redact.ts";
 import type { RuntimeEvent } from "../contracts.ts";
 import { makeFakeDriver } from "../testing/fake-driver.ts";
 import { EventBus } from "./bus.ts";
@@ -85,6 +86,25 @@ describe("EventBus", () => {
     const logged = readFileSync(join(EVENTS_DIR, "redacted-log.ndjson"), "utf8");
     expect(logged).not.toContain(key);
     expect(logged).toContain("«redacted");
+  });
+
+  it("scrubs each event once on its way to the log", async () => {
+    const bus = new EventBus();
+    const scrubbed: string[] = [];
+    const remove = addHeldSecretScrubber((text) => {
+      scrubbed.push(text);
+      return text.replaceAll("hunter2-held-value", "••••••");
+    });
+    try {
+      bus.publish(testEvent({ type: "runtime.error", message: "login failed with hunter2-held-value" } as Partial<RuntimeEvent>));
+      await bus.flush();
+    } finally {
+      remove();
+    }
+    expect(scrubbed.filter((text) => text.includes("login failed"))).toHaveLength(1);
+    const log = readFileSync(join(EVENTS_DIR, "thread-1.ndjson"), "utf8");
+    expect(log).toContain("login failed with ••••••");
+    expect(log).not.toContain("hunter2-held-value");
   });
 
   it("reports an incomplete log once while continuing live delivery", async () => {

@@ -9,6 +9,7 @@ import { FileChoosers, setInputFiles } from "./files.ts";
 import { FrameTree, type FrameTreeNode } from "./frames.ts";
 import { PageHealth, type HealthReport } from "./health.ts";
 import { Mouse, type Point } from "./input.ts";
+import { Navigations } from "./navigations.ts";
 import { Keyboard } from "./keyboard.ts";
 import { RefTable, type RefCounter } from "./refs.ts";
 import { captureScreenshot, type Screenshot, type ScreenshotOptions } from "./screencast.ts";
@@ -75,6 +76,7 @@ export class CdpPage implements ActionContext, WaitContext {
   readonly fileChoosers = new FileChoosers();
   readonly health: PageHealth;
   readonly lifecycle: Lifecycle;
+  readonly navigations: Navigations;
   readonly secrets = new SecretGuard();
   /** Resolves once the tab is configured and running. */
   readonly ready: Promise<void>;
@@ -99,6 +101,7 @@ export class CdpPage implements ActionContext, WaitContext {
     this.mouse = new Mouse(session, this.keyboard);
     this.health = new PageHealth(() => this.url());
     this.lifecycle = new Lifecycle(session, info.targetId);
+    this.navigations = new Navigations(session, this.frames, this.lifecycle);
     this.dialogs.watch(session);
     if (host.setup.handleAuth) this.auth.watch(session);
     this.fileChoosers.watch(session);

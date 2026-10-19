@@ -80,6 +80,30 @@ for paid plans only. The Cloud's server presents it after registering
 (`server/cloud-connected-apps.ts`). One machine id holds the Cloud limit on one
 installation at a time: presenting the grant again moves it.
 
+### Waking a sleeping Cloud
+
+A Cloud on a plan that sleeps when idle collects its events only while it is
+awake. When an event is queued (not dropped, not a duplicate) for an
+installation that has a `cloud_machine_id` and is not polling (its poll lease
+is unset or has run out), the broker asks the Cloud Admin to start that
+machine, at most once a minute per installation (`wake_requested_at`):
+
+```
+POST <CLOUD_ADMIN_URL>/api/cloud/machines/wake
+content-type: application/json
+x-omb-wake-timestamp: <unix seconds>
+x-omb-wake-signature: v1=<base64url(HMAC-SHA256(CLOUD_GRANT_SECRET, "omb-cloud-wake:v1\n" + timestamp + "\n" + machineId))>
+
+{"machineId":"<machine id>"}
+```
+
+The Admin accepts a timestamp within 300 s, each signature once, and answers
+`202 {waking}`. The request runs after Composio has been answered
+(`ctx.waitUntil`); a refusal or failure is logged without the key and never
+fails the event. It is off unless both `CLOUD_GRANT_SECRET` and
+`CLOUD_ADMIN_URL` (an `https://` origin) are set, so a deploy without them
+changes nothing.
+
 ### One-time owner setup, in this order
 
 1. Apply the migration before deploying the code (the old code ignores the
@@ -108,3 +132,11 @@ installation at a time: presenting the grant again moves it.
    Admin, which mints the grants) and `STATS_TOKEN` (given to Admin for the
    fleet counter). Without them, `PUT /v1/installation/cloud` answers 503 and
    the stats route 404.
+6. Waking sleeping Clouds (at launch of a plan that sleeps): apply migration
+   `0003_cloud_wake.sql` (step 1) before deploying the code that uses it, then
+   set `CLOUD_ADMIN_URL` to the Cloud Admin's origin
+   (`https://cloud.openmausbot.com`). Either add it to `vars` in
+   `wrangler.jsonc` in a PR, or `wrangler secret put CLOUD_ADMIN_URL`: a
+   deploy replaces variables set in the dashboard, but keeps secrets. Without
+   it (or without `CLOUD_GRANT_SECRET`) the broker never asks the Admin to wake
+   anything.

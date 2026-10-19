@@ -44,11 +44,6 @@ describe("the fixture's Live call environment", () => {
     }
     expect(childEnv({ OMB_OPENAI_LIVE_KEY: "sk-real" })).not.toHaveProperty("OMB_OPENAI_LIVE_KEY");
   });
-
-  it("lets the Pro answer cross only as OMB_PRO_PLAN=1", () => {
-    expect(childEnv({ OMB_PRO_PLAN: "1" })).toMatchObject({ OMB_PRO_PLAN: "1" });
-    for (const value of [undefined, "", "0", "true", "yes"]) expect(childEnv({ OMB_PRO_PLAN: value }), String(value)).not.toHaveProperty("OMB_PRO_PLAN");
-  });
 });
 
 describe("the fixture's X research relay", () => {

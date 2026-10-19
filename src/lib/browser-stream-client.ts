@@ -140,7 +140,9 @@ export type PreviewStreamInput =
   | { readonly type: "selectChoose"; readonly id: string; readonly index: number }
   /** Answers the sign-in prompt `id` of tab `tabId`, as it was shown; without a username and password it cancels it. */
   | { readonly type: "authAnswer"; readonly tabId: string; readonly id: string; readonly username?: string; readonly password?: string }
-  | { readonly type: "restart" };
+  | { readonly type: "restart" }
+  /** Starts the browser again after it closed unused (the server sent `asleep`); `awake` follows once it runs. */
+  | { readonly type: "wake" };
 
 export interface PreviewStreamDownload {
   readonly fileName: string;
@@ -243,7 +245,7 @@ export interface PreviewStreamEvents {
   readonly onPopup?: (tabId: string) => void;
   /** The page opened a file picker (`null` once answered or replaced). */
   readonly onFileChooser?: (chooser: PreviewStreamFileChooser | null) => void;
-  /** OpenMausBot's own messages: tabs, nav, selectPopup, cursor, authPrompt, starting, notice. */
+  /** OpenMausBot's own messages: tabs, nav, selectPopup, cursor, authPrompt, starting, notice, asleep, awake. */
   readonly onMessage?: (message: Readonly<Record<string, unknown>>) => void;
   /** Input sent while disconnected is dropped. */
   readonly onConnectedChange: (connected: boolean) => void;
@@ -263,9 +265,9 @@ export interface PreviewStreamClient {
   readonly stop: () => void;
 }
 
-/** A viewer that may operate sizes the page while it watches, and may restart it; everything else needs control. */
+/** A viewer that may operate sizes the page while it watches, and may restart or wake it; everything else needs control. */
 const allowed = (input: PreviewStreamInput, control: PreviewStreamControl): boolean =>
-  input.type === "takeControl" || input.type === "resize" || input.type === "frameCap" || input.type === "restart" || control.controller === "you";
+  input.type === "takeControl" || input.type === "resize" || input.type === "frameCap" || input.type === "restart" || input.type === "wake" || control.controller === "you";
 
 const ACK_MESSAGE = JSON.stringify({ type: "ack" });
 export function createPreviewStreamClient(

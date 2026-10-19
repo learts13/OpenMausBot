@@ -433,7 +433,8 @@ it("once the Cloud is ready, offers Copy this computer here for the Cloud itself
   await flush();
   expect(move.state.mock.calls).toContainEqual(["cloud"]);
   expect(render().html).toContain("Copy this computer&#x27;s bots and chats");
-  expect(render().html).toContain("My Cloud has its own, and this computer has its own: Ember.");
+  // What lives where is said once, by This computer and My Cloud at the top of the page.
+  expect(render().html).not.toContain("live on each side");
 });
 
 const ENDS = new Date(2026, 9, 15, 12).getTime(), DAY = 86_400_000;

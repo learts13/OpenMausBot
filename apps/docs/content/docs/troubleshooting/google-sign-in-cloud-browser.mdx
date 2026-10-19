@@ -6,7 +6,7 @@ icon: KeyRound
 
 ## What you see
 
-A bot's browser opens Google's sign-in, you enter your email, and the page stops at **Verifying it's you** with **Complete sign-in using your passkey** (or **Use your passkey to confirm it's really you**). The step never finishes.
+A bot's browser opens Google's sign-in, you enter your email, and the page stops at **Verifying it's you** with **Complete sign-in using your passkey** (or **Use your passkey to confirm it's really you**, or **Use your security key**). The passkey step can't finish there: Google may say something went wrong, and offers **Try another way**.
 
 ## Why it happens
 
@@ -16,7 +16,7 @@ A passkey lives on your own phone or computer: Windows Hello, Touch ID, your pho
 - Signing in with your phone by scanning a QR code also doesn't work there. That method needs Bluetooth between your phone and the computer running the browser, and a cloud computer has none.
 - **On your own computer**, a bot's browser runs without a window, so your system's passkey prompt has nowhere to appear.
 
-Once the bot's browser reaches this step, it shows a banner explaining it, and the bot is told to stop retrying.
+A bot's browser has no passkey of its own, so it answers Google's request straight away as "no passkey here", the way your own browser does when you close its passkey window. Google then lets you choose another way. The browser shows a banner explaining this, and the bot is told to stop retrying and choose **Try another way**, or to use the browser on your own computer.
 
 ## What works, best first
 
@@ -45,6 +45,6 @@ Your passkey works in the browser on your own computer. If you lend that compute
 
 ## Still stuck
 
-- **The page doesn't respond when you click Try another way.** An older OpenMausBot freezes the page while it waits for the passkey. Update the desktop app and My Cloud, or restart the browser from the Browser tab's menu and use route 1.
+- **The page doesn't respond when you click Try another way.** An older OpenMausBot leaves the passkey request waiting, which can freeze the page. Update the desktop app and My Cloud, or restart the browser from the Browser tab's menu and use route 1.
 - **Google says the browser isn't secure, or blocks the sign-in.** Use route 1. Google limits sign-ins from automated browsers, and connected apps aren't affected.
 - **No password on the account.** A passkey-only account has no password to fall back on. Add one in your Google Account (**Security → How you sign in to Google**), or use route 1 or 3.

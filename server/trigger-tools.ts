@@ -40,6 +40,9 @@ function instructionsOf(text: string) {
 function agentSchedule(schedule: Routine["schedule"]) {
   if (schedule.type === "once") return { type: "once" as const, at: new Date(schedule.at).toISOString() };
   if (schedule.type === "cron") return { ...schedule };
+  if (schedule.type === "limit_reset") {
+    return { type: "limit_reset" as const, engine: schedule.engine, repeat: schedule.repeat, at: schedule.at === null ? "not known yet; it runs once the engine reports its reset" : new Date(schedule.at).toISOString() };
+  }
   if (schedule.type === "interval") {
     return {
       type: "interval" as const,

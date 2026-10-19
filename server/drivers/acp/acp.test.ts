@@ -1034,6 +1034,25 @@ describe("ACP turns (fake CLI)", () => {
     });
   });
 
+  it("hands an agent that reaches MCP servers by URL OpenMausBot's own servers as endpoints of this server, no proxy process", async () => {
+    await create(createAcpDriver({ ...SELECT_MODEL_SUPPORT, driverKind: "httpMcpTest", selectModel: undefined, ownMcpOverHttp: true }));
+    const dump = join(scratch, "own-http.json");
+    process.env.FAKE_ACP_DUMP = dump;
+    const harness = "http://127.0.0.1:8799";
+    await instance.adapter.sendTurn({
+      threadId: "t-own-http", text: "go",
+      integrations: {
+        browser: { command: process.execPath, args: ["/app/dist-server/harness-mcp-proxy.js", "browser"], env: { OMB_HARNESS_URL: harness, OMB_MCP_TOKEN_BROWSER: "synthetic-browser-capability" } },
+        custom: { notes: { command: process.execPath, args: ["/tmp/notes-mcp.js"], env: {} } },
+      },
+    });
+    expect(await recorder.until((event) => event.type === "turn.completed")).toMatchObject({ ok: true });
+    expect(JSON.parse(readFileSync(`${dump}.mcp.json`, "utf8"))).toEqual([
+      { type: "http", name: "browser", url: `${harness}/api/internal/mcp-http/browser`, headers: [{ name: "authorization", value: "Bearer synthetic-browser-capability" }] },
+      { name: "notes", command: process.execPath, args: ["/tmp/notes-mcp.js"], env: [] },
+    ]);
+  });
+
   it.each([false, true])("mounts Data through the existing stdio transport unless excluded (excluded=%s)", async (excluded) => {
     await create();
     const dump = join(scratch, "data.json");

@@ -7,10 +7,12 @@ import { DATA_DIR } from "./config.ts";
 import type { RuntimeEvent } from "./contracts.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { redactSecretsInText } from "./redact.ts";
+import { activeRunsOf, nextDueOf, wakeHoldOf } from "./routine-due.ts";
 import type { GroupGoalRunStatus } from "../shared/group-goal-run.ts";
 import type { RoutineRequestOperation } from "../shared/routine-request.ts";
-import { normalizeCronSchedule, nextCronRuns, type RoutineCronSchedule } from "../shared/routine-schedule.ts";
-import { clockMinutes, INTERVAL_RESTRICTION_SEARCH_MS, intervalAllowsOccurrence, intervalHasRestrictions, isSameLocalDay, latestIntervalOccurrence, MAX_DATE_MS, nextAlignedInterval } from "./routine-intervals.ts";
+import { intervalAllowsOccurrence, intervalHasRestrictions, isSameLocalDay, latestIntervalOccurrence, MAX_DATE_MS } from "./routine-intervals.ts";
+import { cleanSchedule, cloneSchedule, limitResetOccurrence, loadSchedule, mergeScheduleUpdate, nextOccurrence, RoutineScheduleError, type RoutineSchedule, type RoutineScheduleInput } from "./routine-schedules.ts";
+import { runsOnce } from "../shared/limit-reset.ts";
 import {
   isRoutineProblemRun, type RoutineContextAttachment, type RoutineIntervalWindow, type RoutineRetryCause, type RoutineRunStatus, type RoutineRunTrigger,
 } from "../shared/routines.ts";
@@ -28,32 +30,8 @@ import { EVENT_RETRY_WINDOW_MS, loadEventReceipts, MAX_EVENT_RECEIPTS, type Even
 
 export type { RoutineContextAttachment, RoutineIntervalWindow, RoutineRunStatus, RoutineRunTrigger };
 export { intervalHasRestrictions } from "./routine-intervals.ts";
-
-export interface RoutineIntervalSchedule {
-  type: "interval";
-  everyMinutes: number;
-  anchorAt: number;
-  /** Local weekdays (`0` is Sunday). Missing means every day. */
-  weekdays?: number[];
-  window?: RoutineIntervalWindow;
-  endsAt?: number;
-}
-
-export type RoutineIntervalScheduleInput = Omit<RoutineIntervalSchedule, "weekdays" | "window" | "endsAt"> & {
-  weekdays?: number[] | null;
-  window?: RoutineIntervalWindow | null;
-  endsAt?: number | null;
-};
-
-export type RoutineSchedule =
-  | { type: "once"; at: number }
-  | { type: "daily"; time: string; weekdays: number[] }
-  | RoutineCronSchedule
-  | RoutineIntervalSchedule;
-
-export type RoutineScheduleInput =
-  | Exclude<RoutineSchedule, RoutineIntervalSchedule>
-  | RoutineIntervalScheduleInput;
+export { nextOccurrence, RoutineScheduleError } from "./routine-schedules.ts";
+export type { RoutineIntervalSchedule, RoutineIntervalScheduleInput, RoutineSchedule, RoutineScheduleInput } from "./routine-schedules.ts";
 
 /** `cloud` runs the agent inside the bot's Boat VM; `maus` runs the bot's own provider and borrows only its computer tools. */
 export type RoutineRunOn = "maus" | "cloud";
@@ -261,12 +239,17 @@ export interface RoutineManagerOptions {
   /** A run a restart cut off, before it starts again or fails: its old turn's work must not resume as well. */
   onRunCut?: (run: RoutineRun) => void;
   hasPendingDelegations?: (threadId: string) => boolean;
+  /** When an engine's usage limit resets (epoch ms), or null while that is not known. */
+  limitResetAt?: (engine: string) => number | null;
+  /** The bot has a backup engine to continue on when its own engine's usage limit refuses a run. */
+  limitBackup?: (botId: string) => boolean;
   /** Work this thread handed to another bot is still open, so its wait is not only on the person. */
   handedOffWorkLive?: (threadId: string) => boolean;
   launchId?: string;
+  /** A Cloud home woken from a sleep it was stopped for (server/cloud-power.ts): not a startup, so no "run on startup". */
+  skipStartupRuns?: boolean;
 }
 
-const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
 const CATCH_UP_MS = 12 * 60 * 60_000;
 const WAKE_HORIZON_MS = 60 * 60_000;
 
@@ -291,12 +274,6 @@ const ROUTINE_REQUEST_ACTIONS = new Set<RoutineRequestOperation["action"]>([
 
 function isRoutineRequestAction(value: unknown): value is RoutineRequestOperation["action"] {
   return typeof value === "string" && ROUTINE_REQUEST_ACTIONS.has(value as RoutineRequestOperation["action"]);
-}
-
-function cleanDays(days: unknown): number[] {
-  if (!Array.isArray(days)) return ALL_DAYS;
-  const out = [...new Set(days.filter((d): d is number => Number.isInteger(d) && d >= 0 && d <= 6))].sort();
-  return out.length ? out : ALL_DAYS;
 }
 
 function cleanAttachments(value: unknown): RoutineContextAttachment[] {
@@ -338,22 +315,6 @@ function loadAttachments(value: unknown): RoutineContextAttachment[] {
   } catch {
     return [];
   }
-}
-
-function cloneSchedule(schedule: RoutineSchedule): RoutineSchedule {
-  if (schedule.type === "once") return { type: "once", at: schedule.at };
-  if (schedule.type === "cron") return { ...schedule };
-  if (schedule.type === "interval") {
-    return {
-      type: "interval",
-      everyMinutes: schedule.everyMinutes,
-      anchorAt: schedule.anchorAt,
-      ...(schedule.weekdays ? { weekdays: [...schedule.weekdays] } : {}),
-      ...(schedule.window ? { window: { ...schedule.window } } : {}),
-      ...(schedule.endsAt === undefined ? {} : { endsAt: schedule.endsAt }),
-    };
-  }
-  return { type: "daily", time: schedule.time, weekdays: [...schedule.weekdays] };
 }
 
 function cloneAttachments(attachments: readonly RoutineContextAttachment[] | undefined): RoutineContextAttachment[] {
@@ -399,156 +360,6 @@ function cloneRun(run: RoutineRun): RoutineRun {
     attachments: cloneAttachments(run.attachments),
     denials: run.denials ? [...run.denials] : undefined,
   };
-}
-
-function cleanIntervalWeekdays(value: unknown): number[] | undefined {
-  if (value == null) return undefined;
-  if (!Array.isArray(value) || value.length === 0 || value.length > ALL_DAYS.length) {
-    throw new Error("Choose at least one valid interval day");
-  }
-  if (value.some((day) => typeof day !== "number" || !Number.isInteger(day) || day < 0 || day > 6)) {
-    throw new Error("Interval days must be whole numbers from 0 to 6");
-  }
-  if (new Set(value).size !== value.length) throw new Error("Choose each interval day only once");
-  const weekdays = [...value].sort((a, b) => a - b);
-  return weekdays.length === ALL_DAYS.length ? undefined : weekdays;
-}
-
-function cleanIntervalWindow(value: unknown, everyMinutes: number): RoutineIntervalWindow | undefined {
-  if (value == null) return undefined;
-  if (typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("Choose a valid interval time window");
-  }
-  const candidate = value as Partial<RoutineIntervalWindow>;
-  const start = typeof candidate.start === "string" ? candidate.start : "";
-  const end = typeof candidate.end === "string" ? candidate.end : "";
-  const startMinutes = clockMinutes(start);
-  const endMinutes = clockMinutes(end);
-  if (startMinutes == null || endMinutes == null) {
-    throw new Error("Interval window times must use HH:MM");
-  }
-  if (startMinutes >= endMinutes) {
-    throw new Error("Interval window must start before it ends on the same day");
-  }
-  if (endMinutes - startMinutes < everyMinutes) {
-    throw new Error("Interval window must be at least as long as the interval");
-  }
-  return { start, end };
-}
-
-function cleanIntervalEndsAt(value: unknown, anchorAt: number): number | undefined {
-  if (value == null) return undefined;
-  if (
-    typeof value !== "number" ||
-    !Number.isSafeInteger(value) ||
-    value < anchorAt ||
-    value > MAX_DATE_MS
-  ) {
-    throw new Error("Choose a valid interval end time after its start");
-  }
-  return value;
-}
-
-export class RoutineScheduleError extends Error {
-  readonly status = 400;
-}
-
-function parseSchedule(schedule: RoutineScheduleInput, after: number): RoutineSchedule {
-  if (schedule?.type === "cron") return normalizeCronSchedule(schedule, after);
-  if (schedule?.type === "once") {
-    const at = Number(schedule.at);
-    if (!Number.isFinite(at)) throw new Error("Choose a valid date and time");
-    return { type: "once", at };
-  }
-  if (schedule?.type === "daily") {
-    const time = String(schedule.time ?? "");
-    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) throw new Error("Time must use HH:MM");
-    return { type: "daily", time, weekdays: cleanDays(schedule.weekdays) };
-  }
-  if (schedule?.type === "interval") {
-    const { everyMinutes, anchorAt } = schedule;
-    if (typeof everyMinutes !== "number" || !Number.isInteger(everyMinutes) || everyMinutes < 5 || everyMinutes > 1_440) {
-      throw new Error("Interval must be a whole number from 5 to 1440 minutes");
-    }
-    if (
-      typeof anchorAt !== "number" ||
-      !Number.isSafeInteger(anchorAt) ||
-      anchorAt < 0 ||
-      anchorAt > MAX_DATE_MS
-    ) {
-      throw new Error("Choose a valid interval start time");
-    }
-    const weekdays = cleanIntervalWeekdays(schedule.weekdays);
-    const window = cleanIntervalWindow(schedule.window, everyMinutes);
-    const endsAt = cleanIntervalEndsAt(schedule.endsAt, anchorAt);
-    return {
-      type: "interval",
-      everyMinutes,
-      anchorAt,
-      ...(weekdays ? { weekdays } : {}),
-      ...(window ? { window } : {}),
-      ...(endsAt === undefined ? {} : { endsAt }),
-    };
-  }
-  throw new Error("Choose a supported schedule");
-}
-
-function cleanSchedule(schedule: RoutineScheduleInput, after: number): RoutineSchedule {
-  try { return parseSchedule(schedule, after); }
-  catch (error) { throw new RoutineScheduleError((error as Error).message); }
-}
-
-function loadSchedule(value: unknown, after: number): RoutineSchedule | null {
-  try {
-    return cleanSchedule(value as RoutineScheduleInput, after);
-  } catch {
-    return null;
-  }
-}
-
-export function nextOccurrence(schedule: RoutineSchedule, after: number): number | null {
-  if (schedule.type === "once") return schedule.at > after ? schedule.at : null;
-  if (schedule.type === "cron") return nextCronRuns(schedule, after, 1)[0] ?? null;
-  if (schedule.type === "interval") {
-    const intervalMs = schedule.everyMinutes * 60_000;
-    let candidate = nextAlignedInterval(schedule, after);
-    if (!intervalHasRestrictions(schedule)) return candidate;
-    const maxCandidates = Math.ceil(INTERVAL_RESTRICTION_SEARCH_MS / intervalMs) + 2;
-    for (let checked = 0; candidate !== null && checked < maxCandidates; checked++) {
-      if (schedule.endsAt !== undefined && candidate > schedule.endsAt) return null;
-      if (intervalAllowsOccurrence(schedule, candidate)) return candidate;
-      const next = candidate + intervalMs;
-      candidate = Number.isSafeInteger(next) && next <= MAX_DATE_MS ? next : null;
-    }
-    return null;
-  }
-  const [hour, minute] = schedule.time.split(":").map(Number);
-  const weekdays = new Set(cleanDays(schedule.weekdays));
-  for (let offset = 0; offset <= 8; offset++) {
-    const d = new Date(after);
-    d.setDate(d.getDate() + offset);
-    d.setHours(hour, minute, 0, 0);
-    if (d.getTime() > after && weekdays.has(d.getDay())) return d.getTime();
-  }
-  return null;
-}
-
-function mergeScheduleUpdate(
-  current: RoutineSchedule,
-  incoming: RoutineScheduleInput,
-): RoutineScheduleInput {
-  if (current.type !== "interval" || incoming.type !== "interval") return incoming;
-  const merged: RoutineIntervalScheduleInput = { ...incoming };
-  if (!Object.hasOwn(incoming, "weekdays") && current.weekdays) {
-    merged.weekdays = [...current.weekdays];
-  }
-  if (!Object.hasOwn(incoming, "window") && current.window) {
-    merged.window = { ...current.window };
-  }
-  if (!Object.hasOwn(incoming, "endsAt") && current.endsAt !== undefined) {
-    merged.endsAt = current.endsAt;
-  }
-  return merged;
 }
 
 function sanitizeInput(input: RoutineInput, after: number): Omit<Routine, "id" | "createdAt" | "updatedAt" | "nextRunAt"> {
@@ -597,7 +408,7 @@ function sanitizeInput(input: RoutineInput, after: number): Omit<Routine, "id" |
     attachments,
     ...(continuity ? { continuity: true } : {}),
     ...(input.overlap === "queue" ? { overlap: "queue" as const } : {}),
-    ...(input.runOnStartup === true && schedule.type !== "once" ? { runOnStartup: true } : {}),
+    ...(input.runOnStartup === true && !runsOnce(schedule) ? { runOnStartup: true } : {}),
   };
 }
 
@@ -774,15 +585,10 @@ export class RoutineManager {
     return true;
   }
 
-  wakeHold(horizonMs = WAKE_HORIZON_MS): { hold: boolean; reason?: "running" | "due"; at?: number } {
-    const now = this.now();
-    const startsLater = (run: RoutineRun) => run.status === "queued" && (run.retryAt ?? 0) > now;
-    if (this.runs.some((run) => ["queued", "running", "waiting"].includes(run.status) && !startsLater(run))) return { hold: true, reason: "running" };
-    const due = [...this.routines.filter((routine) => routine.enabled).map((routine) => routine.nextRunAt), ...this.runs.filter(startsLater).map((run) => run.retryAt)]
-      .filter((at): at is number => at != null && at <= now + horizonMs)
-      .sort((a, b) => a - b)[0];
-    return due === undefined ? { hold: false } : { hold: true, reason: "due", at: due };
-  }
+  wakeHold(horizonMs = WAKE_HORIZON_MS) { return wakeHoldOf(this.routines, this.runs, this.now(), horizonMs); }
+  /** A Cloud home's sleep check (server/routine-due.ts). */
+  hasActiveRuns(): boolean { return activeRunsOf(this.runs, this.now()); }
+  nextDueAt(): number | null { return nextDueOf(this.routines, this.runs, this.now()); }
 
   listRuns(from?: number, to?: number): RoutineRun[] {
     return this.runs
@@ -876,6 +682,7 @@ export class RoutineManager {
     }
     const at = this.now();
     const clean = sanitizeInput(input, at);
+    clean.schedule = this.timedSchedule(clean.schedule);
     if (this.targetState(clean) === "missing") throw new Error(this.missingTargetMessage(clean.target));
     const nextRunAt = clean.enabled ? this.initialOccurrence(clean.schedule, at) : null;
     if (clean.schedule.type === "interval" && clean.enabled && nextRunAt === null) {
@@ -931,6 +738,7 @@ export class RoutineManager {
       overlap: Object.hasOwn(patch, "overlap") ? patch.overlap : routine.overlap,
       runOnStartup: patch.runOnStartup ?? routine.runOnStartup,
     }, now);
+    clean.schedule = this.timedSchedule(clean.schedule, routine.id);
     if (this.targetState(clean) === "missing") throw new Error(this.missingTargetMessage(clean.target));
     const scheduleChanged = JSON.stringify(clean.schedule) !== JSON.stringify(routine.schedule);
     const enabledChanged = clean.enabled !== routine.enabled;
@@ -1197,13 +1005,13 @@ export class RoutineManager {
     return cloneRun(run);
   }
 
-  markAllSeen(): RoutineRun[] {
-    if (!this.runs.some((run) => !run.seenAt && isRoutineProblemRun(run))) return [];
+  markAllSeen(visible: (run: RoutineRun) => boolean = () => true): RoutineRun[] {
+    const due = (run: RoutineRun) => !run.seenAt && isRoutineProblemRun(run) && visible(run);
+    if (!this.runs.some(due)) return [];
     const stampAt = this.now();
     const updated: RoutineRun[] = [];
     this.commitMutation(() => {
-      for (const run of this.runs) {
-        if (run.seenAt || !isRoutineProblemRun(run)) continue;
+      for (const run of this.runs.filter(due)) {
         run.seenAt = stampAt;
         updated.push(run);
       }
@@ -1230,6 +1038,40 @@ export class RoutineManager {
     return moved.length;
   }
 
+  /** The engines' reset times changed: each limit-reset routine that is on takes its engine's new time. */
+  retimeLimitResets(): number {
+    const moved = this.routines.filter((routine) => {
+      if (!routine.enabled || routine.schedule.type !== "limit_reset") return false;
+      const schedule = this.timedSchedule(routine.schedule, routine.id);
+      if (schedule.type !== "limit_reset" || (schedule.at === routine.schedule.at && schedule.at === routine.nextRunAt)) return false;
+      routine.schedule = schedule;
+      routine.nextRunAt = schedule.at;
+      return true;
+    });
+    if (moved.length) this.save();
+    for (const routine of moved) this.emitRoutine(routine);
+    return moved.length;
+  }
+
+  /** Moves only the next run to `until`; the runs after it keep their schedule. A limit-reset routine has no time to move. */
+  deferNextRun(id: string, until: number): Routine | null {
+    const routine = this.routines.find((candidate) => candidate.id === id);
+    if (!routine) return null;
+    if (!routine.enabled || routine.nextRunAt === null || routine.nextRunAt >= until || routine.schedule.type === "limit_reset") return this.routineWithHealth(routine);
+    this.commitMutation(() => {
+      if (routine.schedule.type === "once") routine.schedule = { type: "once", at: until };
+      routine.nextRunAt = until;
+    });
+    this.emitRoutine(routine);
+    return this.routineWithHealth(routine);
+  }
+
+  private timedSchedule(schedule: RoutineSchedule, routineId?: string, ranFor?: number): RoutineSchedule {
+    if (schedule.type !== "limit_reset") return schedule;
+    const last = ranFor ?? (routineId ? this.runs.findLast((run) => run.routineId === routineId && run.triggerSource === "schedule")?.scheduledFor : undefined);
+    return { ...schedule, at: limitResetOccurrence(this.options.limitResetAt?.(schedule.engine) ?? null, last) };
+  }
+
   get isTicking(): boolean { return this.ticking; }
 
   start() {
@@ -1252,6 +1094,7 @@ export class RoutineManager {
   }
 
   private queueStartupRuns(): boolean {
+    if (this.options.skipStartupRuns) return true;
     const launchId = this.options.launchId;
     if (launchId !== undefined && launchId === this.startupLaunchId) return true;
     const now = this.now();
@@ -1302,7 +1145,7 @@ export class RoutineManager {
       );
       // An unanswered wait gives way to its routine's next occurrence, which would otherwise be skipped behind it.
       for (const routine of dueRoutines) {
-        if (routine.schedule.type === "once" || now - routine.nextRunAt! > CATCH_UP_MS) continue;
+        if (runsOnce(routine.schedule) || now - routine.nextRunAt! > CATCH_UP_MS) continue;
         const stale = this.runs.filter((run) => run.routineId === routine.id && supersededBy(routine.nextRunAt!, run, this.options.handedOffWorkLive));
         for (const run of stale) await this.cancelRun(run.id, ROUTINE_SUPERSEDED);
       }
@@ -1316,14 +1159,15 @@ export class RoutineManager {
             const scheduledFor = routine.schedule.type === "interval" && late <= CATCH_UP_MS
               ? latestIntervalOccurrence(routine.schedule, now) ?? pendingAt
               : pendingAt;
-            const overlapping = routine.schedule.type !== "once" && this.runs.some(
+            const overlapping = !runsOnce(routine.schedule) && this.runs.some(
               (run) => run.routineId === routine.id && ["queued", "running", "waiting"].includes(run.status),
             );
             const scheduledQueued = this.runs.some(run => run.routineId === routine.id && run.status === "queued" &&
               (run.triggerSource ?? (run.manual ? "manual" : "schedule")) === "schedule");
             if (!overlapping || (routine.overlap === "queue" && !scheduledQueued)) {
               const run = this.newRun(routine, scheduledFor, false, allocations);
-              if (late > CATCH_UP_MS) {
+              // A reset is a state, not a moment: it still holds however late the computer wakes.
+              if (late > CATCH_UP_MS && routine.schedule.type !== "limit_reset") {
                 run.status = "missed";
                 run.finishedAt = now;
                 run.error = "This computer was offline for more than 12 hours after the scheduled time";
@@ -1524,7 +1368,8 @@ export class RoutineManager {
   private settleFailure(run: RoutineRun, failure: string, facts: RoutineFailureFacts) {
     this.failureFacts.delete(run.id);
     if (this.closing) return;
-    const recovery = recoverRun(run, failure, facts, this.now(), this.ownerNotices);
+    const backupReady = facts.limitResetsAt !== undefined && this.options.limitBackup?.(run.botId) === true;
+    const recovery = recoverRun(run, failure, { ...facts, ...(backupReady ? { backupReady } : {}) }, this.now(), this.ownerNotices);
     if (!recovery.queued) this.failRun(run, recovery.error, "failed", recovery.alert);
     else {
       this.save();
@@ -1593,10 +1438,11 @@ export class RoutineManager {
   }
 
   private advancePastOccurrence(routine: Routine, now: number, occurrence: number) {
+    if (routine.schedule.type === "limit_reset" && routine.schedule.repeat === "every_reset") routine.schedule = this.timedSchedule(routine.schedule, routine.id, occurrence);
     routine.nextRunAt =
-      routine.schedule.type === "once" ? null : nextOccurrence(routine.schedule, Math.max(now, occurrence));
+      runsOnce(routine.schedule) ? null : nextOccurrence(routine.schedule, Math.max(now, occurrence));
     // Not a definition edit: bumping updatedAt here would stale a pending confirmation card.
-    if (routine.schedule.type === "once") {
+    if (runsOnce(routine.schedule)) {
       routine.enabled = false;
       routine.updatedAt = Math.max(now, routine.updatedAt + 1);
     } else if (routine.schedule.type === "interval" && routine.nextRunAt === null) {
@@ -1621,7 +1467,7 @@ export class RoutineManager {
 
   private initialOccurrence(schedule: RoutineSchedule, now: number): number | null {
     // The original time, not max(at, now): tick() decides fire vs missed from it.
-    if (schedule.type === "once") return schedule.at;
+    if (schedule.type === "once" || schedule.type === "limit_reset") return schedule.at;
     return nextOccurrence(schedule, now);
   }
 

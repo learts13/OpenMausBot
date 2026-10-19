@@ -495,6 +495,12 @@ export function setActiveLeaf(threadId: string, leafId: string | null): void {
     .run(threadId, leafId);
 }
 
+/** The time on a conversation's last stored row, without reading the conversation. */
+export function lastRowAt(threadId: string): number | undefined {
+  const row = db().prepare("SELECT at FROM messages WHERE thread_id = ? ORDER BY rowid DESC LIMIT 1").get(threadId) as { at: number } | undefined;
+  return row?.at;
+}
+
 export function latestMessageAts(threadIds: readonly string[], forOrdering = false): Map<string, number> {
   return forOrdering
     ? newestAts(threadIds, "AND ((role = 'user' AND json_extract(json, '$.peerAsk') IS NULL) OR (role = 'bot' AND kind = 'text' AND (json_extract(json, '$.turnTerminal') = 1 OR json_extract(json, '$.turnId') IS NULL)))", "COALESCE(json_extract(json, '$.turnCompletedAt'), at)")
@@ -540,6 +546,15 @@ export function deleteThreads(threadIds: readonly string[], beforeCommit?: () =>
     for (const id of threadIds) for (const statement of statements) statement.run(id);
     beforeCommit?.();
   });
+}
+
+/** Option-card rows whose card names one of `tools`, oldest first; the caller judges each card itself. */
+export function optionCardsForTools(tools: readonly string[]): Array<{ threadId: string; messageId: string }> {
+  if (tools.length === 0) return [];
+  const rows = db()
+    .prepare(`SELECT thread_id, id FROM messages WHERE kind = 'options' AND json_extract(json, '$.card.tool') IN (${tools.map(() => "?").join(", ")}) ORDER BY rowid`)
+    .all(...tools) as Array<{ thread_id: string; id: string }>;
+  return rows.map((row) => ({ threadId: row.thread_id, messageId: row.id }));
 }
 
 export function threadsReferencing(fragment: string): string[] {

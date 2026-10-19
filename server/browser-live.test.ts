@@ -74,6 +74,7 @@ beforeEach(() => {
     interrupted: vi.fn(() => false),
     withHumanAction: vi.fn(async (_session: string, _owner: string, fn: () => unknown) => fn()),
     watch: vi.fn(() => () => {}),
+    onIdleClose: vi.fn(),
     settled: vi.fn(async () => {}),
     launchReady: vi.fn(async () => {}),
     launched: vi.fn(async () => {}),
@@ -562,17 +563,35 @@ describe("authenticated browser viewer relay", () => {
     ]);
     expect(runtime.abandonHumanInput).not.toHaveBeenCalled();
   });
-  it("keeps the browser it shows from closing while the view is open, and starts its idle time when it closes", async () => {
-    const closeBrowser = vi.fn(async () => true);
+  it("closes the browser a view only watches once it sat unused, first telling the view it closed for good so it does not reconnect", async () => {
+    const heard: unknown[] = [];
+    const closeBrowser = vi.fn(async () => { heard.push(...a.res.events("error")); a.socket.close(); return true; });
     runtime = new BrowserRuntime({ closeBrowser }); live = new BrowserLive({ runtime });
     const a = await open();
-    await new Promise((resolve) => setTimeout(resolve, 15));
-    expect(await runtime.closeIfIdle("profile-a", 10)).toBe(false);
-    a.socket.close();
+    const b = await open({ session: "profile-b" });
     expect(await runtime.closeIfIdle("profile-a", 10)).toBe(false);
     await new Promise((resolve) => setTimeout(resolve, 15));
     expect(await runtime.closeIfIdle("profile-a", 10)).toBe(true);
     expect(closeBrowser).toHaveBeenCalledWith("profile-a", expect.objectContaining({ command: "/trusted/agent-browser" }));
+    expect(heard).toEqual([{ retryable: false, asleep: true, message: expect.stringContaining("sat unused") }]);
+    expect(a.res.events("error")).toHaveLength(1);
+    expect(a.res.writableEnded).toBe(true);
+    expect(b.res.writableEnded).toBe(false);
+    expect(b.res.events("error")).toEqual([]);
+  });
+
+  it("counts a person's input through the view as use, and never closes a browser they hold", async () => {
+    runtime = new BrowserRuntime({ closeBrowser: async () => true }); live = new BrowserLive({ runtime });
+    const a = await open();
+    await a.action({ type: "take" });
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    expect(await runtime.closeIfIdle("profile-a", 10)).toBe(false);
+    await a.action({ type: "input_mouse", eventType: "mouseMoved", x: 5, y: 5 });
+    await a.action({ type: "release" });
+    expect(await runtime.closeIfIdle("profile-a", 10)).toBe(false);
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    expect(await runtime.closeIfIdle("profile-a", 10)).toBe(true);
+    expect(a.res.writableEnded).toBe(true);
   });
   it("waits out an idle close in progress before starting a view", async () => {
     let finish!: (closed: boolean) => void;

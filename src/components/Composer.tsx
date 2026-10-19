@@ -1,7 +1,7 @@
 import { directMessageSent, roomMessageSent } from "@/lib/product-events";
 import { useComposerDictation } from "@/lib/use-composer-dictation";
 import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
-import { ArrowUp, BookOpen, Clock, Mic, Paperclip, Sparkles, Square, Target, Users, X } from "lucide-react";
+import { ArrowUp, BookOpen, Clock, Mic, Paperclip, Sparkles, Square, Target, X } from "lucide-react";
 import { useStore, visibleMessages, currentTaskBot, type Bot, type Group, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { useMenuMotion } from "./MenuMotion";
@@ -28,8 +28,7 @@ import {
   type ComposerSendSnapshot,
   type FailedComposerSend,
 } from "@/lib/drafts";
-import { BotAvatar } from "./Avatar";
-import { ComposerMenuRow } from "./ComposerMenuRow";
+import { MentionMenu, type MentionChoice } from "./MentionMenu";
 import { MentionTextarea } from "./MentionTextarea";
 import { ComposerAttachments, pathForFile } from "./ComposerAttachments";
 import { splitTranscriptCitations, type CitationAttachment } from "@/lib/citations";
@@ -57,7 +56,7 @@ import {
   type Attachment,
   type PasteAttachment,
 } from "@/lib/composer-attachments";
-import { MAUS_COLORS, normalizeState } from "@/lib/mascot";
+import { MAUS_COLORS } from "@/lib/mascot";
 import { goalCoordinatorForComposer, groupComposerHint, jevRoomRoutingOn, openTaskWorking, roomRespondersForComposer } from "@/lib/group-routing";
 import { PendingApprovalActions, PendingApprovalPanel, pendingApprovals } from "./PendingApproval";
 import { CallButton } from "./CallView";
@@ -74,7 +73,7 @@ import {
   doubleEnterSteersQueue,
 } from "./ComposerQueuedMessages";
 import { skillAuthoringEnabled } from "@/lib/feature-flags";
-import { mentionChoicesForQuery, mentionQueryAt, mentionRowDescription } from "@/lib/mentions";
+import { mentionChoicesForQuery, mentionQueryAt } from "@/lib/mentions";
 import { serializeThreadRefs, threadTokenFromPaste, threadTokenSpacing } from "@/lib/thread-refs";
 import {
   composerSlashTrigger,
@@ -85,8 +84,6 @@ import {
   type ComposerSlashCommand,
 } from "@/lib/composer-commands";
 import { useSlashSkills } from "@/lib/use-slash-skills";
-
-type MentionChoice = { id: string; name: string; bot?: Bot };
 
 interface ComposerDraftSnapshot extends ComposerSendSnapshot {
   reply: Message | null;
@@ -778,46 +775,8 @@ export function Composer({
             ))}
           </div>
         )}
-        {mentionMotion.shown && (
-          <div
-            ref={mentionListRef}
-            role="listbox"
-            aria-label={t("composer.mention.aria")}
-            className={cn("absolute bottom-full start-2 z-20 mb-2 max-h-72 w-72 overflow-x-hidden overflow-y-auto overscroll-contain rounded-xl border border-hairline/40 bg-raised shadow-lg", mentionMotion.className)} {...mentionMotion.exitProps}
-          >
-            {candidates.map((peer, i) => {
-              const description = mentionRowDescription(peer.bot
-                ? { kind: "bot", title: peer.bot.title }
-                : { kind: "everyone", count: mentionEveryoneCount });
-              return (
-                <ComposerMenuRow
-                  key={peer.id}
-                  id={`composer-mention-${peer.id}`}
-                  data-mention-index={i}
-                  role="option"
-                  aria-selected={i === highlight}
-                  onClick={() => pickMention(peer)}
-                  onMouseEnter={() => setHighlight(i)}
-                  selected={i === highlight}
-                  icon={peer.bot ? (
-                    <BotAvatar
-                      bot={peer.bot}
-                      state={normalizeState(peer.bot.mascotExpression) ?? "happy"}
-                      size={24}
-                    />
-                  ) : (
-                    <span className="flex size-6 items-center justify-center rounded-full bg-raised text-ink-secondary">
-                      <Users size={14} aria-hidden="true" />
-                    </span>
-                  )}
-                  name={peer.name}
-                  description={description || undefined}
-                  kind={peer.bot ? t("composer.mention.agent") : t("composer.mention.channel")}
-                />
-              );
-            })}
-          </div>
-        )}
+        <MentionMenu listRef={mentionListRef} motion={mentionMotion} choices={candidates} highlight={highlight}
+          everyoneCount={mentionEveryoneCount} onPick={pickMention} onHighlight={setHighlight} />
         {approval && (
           <div className="mb-2 overflow-hidden rounded-3xl bg-composer ring-1 ring-composer-ring">
             <PendingApprovalPanel

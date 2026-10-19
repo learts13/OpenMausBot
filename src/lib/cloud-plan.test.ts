@@ -121,13 +121,16 @@ describe("what is for sale, as the Admin says", () => {
 
   it("each plan card: its name, the Admin's price, cloud computers at once and three allowance chips; Most popular is the Admin's recommended plan", () => {
     expect(PLANS.map(plan => planRow(plan, OFFER.recommended))).toEqual([
-      { tier: "personal", name: "Personal", price: "$29", popular: false, line: "1 cloud computer at once", chips: ["1 CPU · 1 GB", "10 GB storage", "50 h cloud computers"] },
-      { tier: "pro", name: "Pro", price: "$49", popular: true, line: "Up to 4 cloud computers at once", chips: ["4 CPU · 4 GB", "40–50 GB storage", "200 h cloud computers"] },
-      { tier: "max", name: "Max", price: "$99", popular: false, line: "Up to 8 cloud computers at once", chips: ["8 CPU · 8 GB", "80–100 GB storage", "400 h cloud computers"] },
+      { tier: "personal", name: "Personal", price: "$29", popular: false, line: "1 cloud computer at once", sleeps: null, chips: ["1 CPU · 1 GB", "10 GB storage", "50 h cloud computers"] },
+      { tier: "pro", name: "Pro", price: "$49", popular: true, line: "Up to 4 cloud computers at once", sleeps: null, chips: ["4 CPU · 4 GB", "40–50 GB storage", "200 h cloud computers"] },
+      { tier: "max", name: "Max", price: "$99", popular: false, line: "Up to 8 cloud computers at once", sleeps: null, chips: ["8 CPU · 8 GB", "80–100 GB storage", "400 h cloud computers"] },
     ]);
     expect(PLANS.map(plan => planRow(plan, "max").popular), "never Pro by itself").toEqual([false, false, true]);
     expect(PLANS.map(plan => planRow(plan).popular)).toEqual([false, false, false]);
-    expect(planRow({ tier: "team", label: "Team", amount: 19900 })).toEqual({ tier: "team", name: "Team", price: "$199", popular: false, line: null, chips: [] });
+    expect(planRow({ tier: "team", label: "Team", amount: 19900 })).toEqual({ tier: "team", name: "Team", price: "$199", popular: false, line: null, sleeps: null, chips: [] });
+    // A plan the Admin says sleeps when idle says so on its card.
+    expect(planRow({ tier: "starter", label: "Starter", amount: 2900, allowances: { cpus: 2, memoryMb: 2048, diskGb: 10, maxDiskGb: 10, computers: 1, computerHours: 10, voiceCharacters: 10_000, sleeps: true } }).sleeps)
+      .toBeTruthy();
     expect(planRow({ tier: "pro", amount: 5831 }).price).toBe("$58.31");
   });
 

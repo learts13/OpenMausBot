@@ -55,10 +55,15 @@ export function journalFile(botId: string): string {
 
 type Op = { tag: " " | "-" | "+"; line: string };
 
-function editScript(a: string[], b: string[]): Op[] {
-  if (a.length * b.length > LCS_CELL_CAP) {
-    return [...a.map((line) => ({ tag: "-" as const, line })), ...b.map((line) => ({ tag: "+" as const, line }))];
+function editScript(fullA: string[], fullB: string[]): Op[] {
+  if (fullA.length * fullB.length > LCS_CELL_CAP) {
+    return [...fullA.map((line) => ({ tag: "-" as const, line })), ...fullB.map((line) => ({ tag: "+" as const, line }))];
   }
+  let shared = 0;
+  while (shared < fullA.length && shared < fullB.length && fullA[shared] === fullB[shared]) shared++;
+  const ops: Op[] = fullA.slice(0, shared).map((line) => ({ tag: " ", line }));
+  const a = fullA.slice(shared);
+  const b = fullB.slice(shared);
   const rows = a.length + 1;
   const cols = b.length + 1;
   const table = new Uint32Array(rows * cols);
@@ -69,7 +74,6 @@ function editScript(a: string[], b: string[]): Op[] {
         : Math.max(table[(i + 1) * cols + j], table[i * cols + j + 1]);
     }
   }
-  const ops: Op[] = [];
   let i = 0;
   let j = 0;
   while (i < a.length && j < b.length) {

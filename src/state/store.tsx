@@ -1,3 +1,5 @@
+import { cloudAsleep, onCloudPower } from "../lib/cloud-power";
+import { api, ApiError } from "./api";
 import {
   createContext,
   useCallback,
@@ -158,7 +160,7 @@ export interface Message extends Pick<import("../../shared/wire").WireMessage, "
   goalRun?: GroupGoalRunCardData;
   call?: import("../../shared/wire").LiveCallRecord;
   channelMode?: "chat" | "goal";
-  tool?: { name: string; ok?: boolean; spoken?: string; setup?: boolean; claudeUpdate?: boolean; place?: PlaceRow; summary?: string; input?: string; output?: string ; itemId?: string; outputPath?: string; fullResult?: boolean };
+  tool?: { name: string; ok?: boolean; spoken?: string; setup?: boolean; claudeUpdate?: boolean; place?: PlaceRow; limitResetsAt?: number; summary?: string; input?: string; output?: string ; itemId?: string; outputPath?: string; fullResult?: boolean };
   steered?: boolean;
   via?: "api" | "call";
   callId?: string;
@@ -572,7 +574,7 @@ export type AppSettingsSection =
   | "activity"
   | "backups"
   | "workspaces"
-  | "skills";
+  | "skills" | "import";
 
 export type BotSettingsSection =
   | "overview"
@@ -884,7 +886,7 @@ export type Action =
   | { type: "toggleSettings"; open?: boolean; section?: BotSettingsSection; botId?: string }
   | { type: "togglePlugins"; open?: boolean; surface?: "apps" | "mcp" }
   | { type: "toggleNewBot"; open?: boolean }
-  | { type: "toggleComputer"; open?: boolean }
+  | { type: "toggleComputer"; open?: boolean; botId?: string }
   | { type: "openDataResult"; botId: string; cardId: string }
   | { type: "dataResultFocusConsumed"; requestId: number }
   | { type: "openSignIn"; botId: string; messageId: string; url: string; site: string; place: import("../../shared/wire").Surface }
@@ -1604,7 +1606,7 @@ export function reducer(state: AppState, action: Action): AppState {
     case "toggleComputer": {
       const open = action.open ?? !state.computerOpen;
       return {
-        ...state,
+        ...state, selectedId: action.botId !== undefined && state.bots.some((bot) => bot.id === action.botId) ? action.botId : state.selectedId,
         computerOpen: open,
         settingsOpen: open ? false : state.settingsOpen,
         inspectorOpen: open ? false : state.inspectorOpen,
@@ -2104,16 +2106,7 @@ export function nextLiveCallLookup(): number {
   return liveCallLookups;
 }
 
-export class ApiError extends Error {
-  readonly status: number;
-  readonly body?: Record<string, unknown>;
-  constructor(message: string, status: number, body?: Record<string, unknown>) {
-    super(message);
-    this.name = "ApiError";
-    this.status = status;
-    this.body = body;
-  }
-}
+export { api, ApiError };
 
 /** `visibility` rides the create itself, so the bot is never announced to people who should not see it. */
 export async function createBotWithRole(role?: BotRole, request: typeof api = api, visibility?: BotVisibility, section?: string): Promise<{ bot: Bot; profileError?: string }> {
@@ -2138,25 +2131,6 @@ export async function createBotWithRole(role?: BotRole, request: typeof api = ap
 /** Messages per snapshot thread and per scrollback page: the server's own page maximum. */
 export const MESSAGE_PAGE_SIZE = 200;
 
-export async function api<T = any>(path: string, init?: RequestInit & { timeoutMs?: number }): Promise<T> {
-  const { timeoutMs, signal, ...rest } = init ?? {};
-  const res = await fetch(path, {
-    headers: { "content-type": "application/json" },
-    ...rest,
-    signal: timeoutMs === undefined
-      ? signal
-      : signal
-        ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)])
-        : AbortSignal.timeout(timeoutMs),
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const error = body?.error;
-    const message = typeof error === "string" ? error : typeof error?.message === "string" ? error.message : `${res.status} ${res.statusText}`;
-    throw new ApiError(message, res.status, body);
-  }
-  return body;
-}
 
 type TrustedApprovalBridge = {
   setMode(
@@ -3261,7 +3235,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       refresh.attempt += 1;
       refresh.timer = setTimeout(() => {
         refresh.timer = null;
-        void loadPeripheral(part, true).catch((nextError) => schedulePeripheralRetry(part, nextError));
+        const retry = () => void loadPeripheral(part, true).catch((nextError) => schedulePeripheralRetry(part, nextError));
+        // A Cloud home asleep: retry once it is awake again, never wake it for this.
+        if (!cloudAsleep()) return retry();
+        const stop = onCloudPower((asleep) => { if (!asleep) { stop(); if (alive) retry(); } });
       }, delay);
     };
     const loadPeripheral = async (part: PeripheralPart, protectLiveFrames: boolean): Promise<void> => {

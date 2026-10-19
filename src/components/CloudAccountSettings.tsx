@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { CloudAccountBridge, CloudAccountState, CloudPlanBridge, CloudPlanSnapshot } from "../../electron/cloud-account.mjs";
 import type { CloudCredit, CloudMachine, CloudTrial } from "../../electron/cloud-home.mjs";
 import { CloudMoveSettings } from "./CloudMove";
+import { CloudSendCard } from "./CloudSendCard";
 import { cloudFilesBridge } from "@/lib/cloud-files";
 import { activeLocale, t } from "@/lib/i18n";
 import { buyOfferAllowed, cloudCreditLine, cloudPlanLabel, cloudPlanLine, cloudPlanView, cloudTrialView, moneyBackLine, offerTrialDays, trialRunning, type CloudPlanView } from "@/lib/cloud-plan";
@@ -53,15 +54,17 @@ function trialLines(trial: CloudTrial | undefined, credit: CloudCredit | undefin
 /**
  * Security: status and address come only from the verified native snapshot; the pairing code never reaches this page.
  */
-function cloudHomeCard({ machine, busy, failed, onConnect, lending, trial = false }: { machine: CloudMachine; busy: boolean; failed: boolean; onConnect: () => void; lending?: CloudAccountBridge["lending"]; trial?: boolean }) {
+function cloudHomeCard({ machine, busy, failed, onConnect, lending, trial = false, waking = false }: { machine: CloudMachine; busy: boolean; failed: boolean; onConnect: () => void; lending?: CloudAccountBridge["lending"]; trial?: boolean; waking?: boolean }) {
   const unreachable = machine.status === "ready" ? machine.unreachable : undefined;
   const connectable = machine.status === "ready" && !unreachable;
   const text = unreachable ? t(unreachable.cause === "host" ? "cloudHome.unreachableHost" : "cloudHome.unreachable")
+    : waking && connectable ? t("cloudHome.waking")
+    : machine.status === "ready" && machine.power?.sleeps ? t("cloudHome.readySleeps")
     : trial && (machine.status === "stopped" || machine.status === "payment-problem") ? t("cloudHome.stoppedTrial")
     : machine.status === "failed" && machine.retryAt ? t("cloudHome.failedRetry", { time: time(machine.retryAt) })
     : machine.status === "provisioning" && machine.setup?.slow ? t("cloudHome.slow") : t(MACHINE_TEXT[machine.status]);
   return <Card title={t("cloudHome.title")}>
-    <div data-cloud-home={machine.status} data-cloud-unreachable={unreachable?.cause} className="flex flex-col items-start gap-3">
+    <div data-cloud-home={machine.status} data-cloud-unreachable={unreachable?.cause} data-cloud-waking={waking && connectable ? true : undefined} className="flex flex-col items-start gap-3">
       <p role="status" className={connectable ? "text-[14px] text-ink" : "text-[13px] text-ink-secondary"}>{text}</p>
       {machine.status === "provisioning" && setupSteps(machine)}
       {connectable && <>
@@ -242,6 +245,7 @@ export function CloudAccountSettings({ linkRequest = 0, cloudHome = false, onCon
   </div>;
   return <>
     <p className="text-[13px] leading-relaxed text-ink-secondary">{t("cloudAccount.optional")}</p>
+    {machine?.status === "ready" && <CloudSendCard />}
     <Card title={t("settings.section.cloudAccount")} subtitle={t("cloudAccount.separate")}>
       {account?.staging && <StagingMark className="mb-3" />}
       {(!account || view.kind === "unknown") && <p role="status" className="text-[13px] text-ink-secondary">{t("cloudAccount.loading")}</p>}
@@ -287,7 +291,7 @@ export function CloudAccountSettings({ linkRequest = 0, cloudHome = false, onCon
       {error && <p role="alert" className="mt-3 text-[13px] text-danger">{t("cloudAccount.actionFailed")}</p>}
       {!account && <button type="button" disabled={busy} className="ui-button mt-3" onClick={() => void perform(() => bridge.state())}>{t("organization.refresh")}</button>}
     </Card>
-    {machine && cloudHomeCard({ machine, busy, failed: homeFailed, onConnect: connectHome, lending: bridge.lending, trial: Boolean(account?.trial) })}
+    {machine && cloudHomeCard({ machine, busy, failed: homeFailed, onConnect: connectHome, lending: bridge.lending, trial: Boolean(account?.trial), waking: account?.waking === true })}
     {signed && view.kind === "paid" && cloudPhoneCard({ ready: machine?.status === "ready", busy, failed: phoneFailed, onUse: openOnPhone })}
     {machine?.status === "ready" && <CloudMoveSettings destination="cloud" />}
   </>;

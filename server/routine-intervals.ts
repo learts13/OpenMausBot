@@ -1,6 +1,6 @@
 // When an interval routine may run: its days, its hours and its end, read in this computer's local time. Moved out of
 // routines.ts unchanged.
-import type { RoutineIntervalSchedule } from "./routines.ts";
+import type { RoutineIntervalSchedule } from "./routine-schedules.ts";
 
 export const MAX_DATE_MS = 8_640_000_000_000_000;
 const LOCAL_DAY_MS = 24 * 60 * 60_000;

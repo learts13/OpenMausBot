@@ -1,4 +1,4 @@
-import type { WireBot, WireGroup, WireTask } from "../../shared/wire.ts";
+import type { WireBot, WireGroup } from "../../shared/wire.ts";
 import {
   ATTACHMENTS_DIR, extensionForMime, FILE_MAX_BYTES, IMAGE_MAX_BYTES, parseAudioRange, readAttachment, saveFile, saveImageUpload,
   validateAttachmentUploadId, type SavedAttachment,
@@ -8,7 +8,6 @@ import { memberBot, memberGroup, type Viewer, type VisibleSet } from "../bot-vis
 import type { ComputerControl } from "../computer-control.ts";
 import type { AppConfig } from "../config.ts";
 import type { Coordinator } from "../coordinator.ts";
-import type { ModelSelection } from "../contracts.ts";
 import type { WorkspaceAccess } from "../enterprise.ts";
 import type { GroupUsageReader } from "../group-thread-usage.ts";
 import { searchMessagesAsync } from "../message-db.ts";
@@ -18,7 +17,7 @@ import {
 } from "../message-file.ts";
 import { resolveRequestAuth, type RequestAuth, type ResolveOptions } from "../request-auth.ts";
 import type { queuedSteerSnapshot } from "../steer-queue.ts";
-import type { BotRecord, GroupRecord, Message, Store, TaskRecord } from "../store.ts";
+import type { BotRecord, GroupRecord, Message, Store } from "../store.ts";
 import { createJobRoutes } from "./jobs.ts";
 import { PASS, type RouteContext, type RouteHandler } from "./table.ts";
 
@@ -48,7 +47,6 @@ export interface ThreadRouteDeps {
   publicBotQueuedMessages(): ReturnType<typeof queuedSteerSnapshot>;
   publicGroupState(record: GroupRecord): WireGroup;
   wireBot(bot: BotRecord): WireBot;
-  wireTask(task: TaskRecord, botModel: ModelSelection): WireTask;
   botComputerControlSnapshot(botId: string): ReturnType<ComputerControl["snapshot"]>;
   messageFileRootsForThread(senderId: string, threadId: string): string[];
   viewerFor(auth: RequestAuth): Viewer;
@@ -59,7 +57,7 @@ export function createThreadRoutes(deps: ThreadRouteDeps): RouteHandler {
   const {
     store, cfg, sessions, groupUsageReader, lendingEnabled,
     hostedWorkspace: HOSTED_WORKSPACE, sessionCookie: SESSION_COOKIE, loopback: LOOPBACK, defaultPage: DEFAULT_PAGE,
-    pageSize, messagePage, messageWindow, publicBotQueuedMessages, publicGroupState, wireBot, wireTask,
+    pageSize, messagePage, messageWindow, publicBotQueuedMessages, publicGroupState, wireBot,
     botComputerControlSnapshot, messageFileRootsForThread, viewerFor, visibleTo,
   } = deps;
   const jobs = createJobRoutes({ store, coordinator: deps.coordinator, groupThreadIsWorking: deps.groupThreadIsWorking, viewerFor, visibleTo, sessions });
@@ -78,11 +76,10 @@ export function createThreadRoutes(deps: ThreadRouteDeps): RouteHandler {
       const shownBots = store.bots.filter((bot) => visible.bot(bot.id));
       const queued = publicBotQueuedMessages();
       return json(res, 200, {
-        bots: shownBots.map((bot) => memberBot({
-          ...wireBot(bot),
-          tasks: store.tasks(bot.id).map((task) => wireTask(task, bot.modelSelection)),
-          ...messagePage(bot.threadId, limit),
-        }, visible)),
+        bots: shownBots.map((bot) => {
+          const wired = wireBot(bot);
+          return memberBot({ ...wired, tasks: wired.tasks ?? [], ...messagePage(bot.threadId, limit) }, visible);
+        }),
         botQueuedMessages: visible.everything ? queued : Object.fromEntries(Object.entries(queued).filter(([threadId]) => visible.thread(threadId))),
         sections: visible.sections(store.sections),
         groups: store.groups.filter((g) => visible.group(g.id)).map((g) => {

@@ -2,39 +2,28 @@ import { track } from "@/lib/analytics";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import { teamImportPreview, type PendingTeamImport } from "@/lib/team-import";
+import { addTemplate } from "@/lib/template-add";
 import { orgCardAction, orgPackagePreview, type OrgLibraryListing, type OrgLibraryPackage } from "@/lib/org-library";
 import type { PackageDocument } from "../../shared/package-format";
 import type { Routine } from "@/lib/routines";
 import { api, useStore, type Bot, type Group } from "@/state/store";
-import {
-  ArrowLeft,
-  BookOpen,
-  CalendarClock,
-  NotebookPen,
-  Check,
-  Compass,
-  Crown,
-  ExternalLink,
-  FolderOpen,
-  Github,
-  Loader2,
-  MessageSquare,
-  Plug,
-  Search,
-  Share2,
-  UploadCloud,
-  Users,
-  X,
-} from "lucide-react";
+import { ArrowLeft, Check, Compass, ExternalLink, FolderOpen, Github, Loader2, Search, Share2, UploadCloud, Users, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { catalogCopy, catalogMatches, type TeamCatalog, type TeamCatalogEntry } from "@/lib/team-catalog";
 
+import { GrokFinishSetup, grokSetupLeft } from "./GrokFinishSetup";
+import { TEAM_GLYPHS, TeamImportDetails } from "./TeamImportDetails";
+import { GrokImportFlow } from "./GrokImportFlow";
+import { ReadyBotGallery } from "./ReadyBotGallery";
 import { ShareTeamDialog } from "./ShareTeamDialog";
 import { OrgLibraryTab } from "./TeamLibraryPanelOrg";
 import { MAX_TEAM_BACKUP_BYTES } from "../../shared/team-backup";
 import { takeImportName } from "../../shared/import-name";
+import { isGrokLink } from "../../shared/grok-import";
 const COMMUNITY_TEAMS_REPOSITORY = "https://github.com/milind-soni/openmausbot-teams";
+
+export { TeamImportDetails };
 
 export interface TeamImportResult {
   name: string;
@@ -43,7 +32,7 @@ export interface TeamImportResult {
   connections?: number;
 }
 
-type ImportSource = "library" | "file" | "github";
+type ImportSource = "library" | "file" | "github" | "grok";
 type TeamTab = "org" | "explore" | "import" | "scout" | "share";
 
 interface ScoutResult {
@@ -68,13 +57,6 @@ interface DirectoryCandidate {
 }
 
 const DIRECTORY_COLORS = ["cyan", "red", "purple", "green", "orange"] as const;
-
-const TEAM_GLYPHS = [
-  "bg-purple-500/15 text-purple-300",
-  "bg-cyan-500/15 text-cyan-300",
-  "bg-orange-500/15 text-orange-300",
-  "bg-emerald-500/15 text-emerald-300",
-] as const;
 
 async function openExternal(url: string): Promise<void> {
   if (window.ogb?.openExternal) {
@@ -105,106 +87,6 @@ function TeamGlyph({ index }: { index: number }) {
   );
 }
 
-export function TeamImportDetails({ pending, importedNames, org = false }: {
-  pending: PendingTeamImport;
-  importedNames: string[];
-  org?: boolean;
-}) {
-  return (
-    <>
-      {pending.description && (
-        <p className="max-w-2xl text-[13.5px] leading-relaxed text-ink-secondary">{pending.description}</p>
-      )}
-      {pending.brief && (
-        <div className="mt-4 rounded-xl border border-hairline px-4 py-3 text-[12.5px] text-ink-secondary">
-          <div className="font-medium text-ink">{t("teamImport.brief")}</div>
-          <p className="mt-1 line-clamp-4 whitespace-pre-wrap break-words">{pending.brief}</p>
-        </div>
-      )}
-      {Boolean(pending.warnings?.length) && <div className="mt-4 rounded-xl border border-hairline px-4 py-3 text-[12.5px] text-ink-secondary">
-        <div className="mb-2 font-medium text-ink">{t("templates.backupNotes")}</div>
-        {pending.warnings?.map((warning, index) => <p key={index}>{warning}</p>)}
-      </div>}
-      {(pending.kind === "package" || pending.kind === "backup") && (
-        <div className="mt-5 flex flex-wrap gap-2 text-[11.5px] text-ink-secondary">
-          {pending.chiefOfStaff && <span className="flex items-center gap-1.5 rounded-full bg-raised px-3 py-1.5"><Crown size={13} />{t("templates.leads", { name: pending.chiefOfStaff })}</span>}
-          {!pending.library && <span className="flex items-center gap-1.5 rounded-full bg-raised px-3 py-1.5"><MessageSquare size={13} />{t("templates.groupChats", { count: pending.rooms })}</span>}
-          {!(pending.library && !pending.playbooks) && <span className="flex items-center gap-1.5 rounded-full bg-raised px-3 py-1.5"><BookOpen size={13} />{t("templates.playbooks", { count: pending.playbooks })}</span>}
-          {!pending.library && <span className="flex items-center gap-1.5 rounded-full bg-raised px-3 py-1.5"><CalendarClock size={13} />{pending.version === 2 ? t("teamImport.routinesPaused", { count: pending.routines }) : t("templates.pausedRoutines", { count: pending.routines })}</span>}
-          {pending.kind === "package" && pending.version !== 2 && <span className="flex items-center gap-1.5 rounded-full bg-raised px-3 py-1.5"><Plug size={13} />{t("templates.connections", { count: pending.apps.length })}</span>}
-          {Boolean(pending.connections?.length) && <span className="flex items-center gap-1.5 rounded-full bg-raised px-3 py-1.5"><Plug size={13} />{t("teamImport.connections", { count: pending.connections?.length ?? 0 })}</span>}
-          {Boolean(pending.notes) && <span className="flex items-center gap-1.5 rounded-full bg-raised px-3 py-1.5"><NotebookPen size={13} />{t("teamImport.notes", { count: pending.notes ?? 0 })}</span>}
-          {Boolean(pending.presets?.length) && <span className="flex items-center gap-1.5 rounded-full bg-raised px-3 py-1.5"><Users size={13} />{t("teamImport.presets", { count: pending.presets?.length ?? 0 })}</span>}
-        </div>
-      )}
-      {Boolean(pending.skills?.length) && (
-        <div className="mt-4 rounded-xl border border-hairline px-4 py-3 text-[12.5px] text-ink-secondary">
-          <div className="font-medium text-ink">{org ? t("orgLibrary.skillsOn") : pending.version === 2 ? t("teamImport.skillsOff") : t("templates.skillsDisabled")}</div>
-          <p className="mt-1 break-words">{pending.skills?.join(", ")}</p>
-          {!org && <p className="mt-1">{pending.version === 2 ? t("teamImport.skillsReview") : t("templates.skillsReview")}</p>}
-        </div>
-      )}
-      {pending.library && Boolean(pending.presets?.length) && (
-        <div className="mt-4 rounded-xl border border-hairline px-4 py-3 text-[12.5px] text-ink-secondary">
-          <div className="font-medium text-ink">{t("teamImport.presetList")}</div>
-          <p className="mt-1 break-words">{pending.presets?.join(", ")}</p>
-        </div>
-      )}
-      {Boolean(pending.offeredSkills?.length) && (
-        <div className="mt-4 rounded-xl border border-hairline px-4 py-3 text-[12.5px] text-ink-secondary">
-          <div className="font-medium text-ink">{t("teamImport.offeredSkills")}</div>
-          <p className="mt-1 break-words">{pending.offeredSkills?.join(", ")}</p>
-        </div>
-      )}
-      {Boolean(pending.connections?.length) && (
-        <div className="mt-4 rounded-xl border border-hairline px-4 py-3 text-[12.5px] text-ink-secondary">
-          <div className="font-medium text-ink">{t("teamImport.connections", { count: pending.connections?.length ?? 0 })}</div>
-          <ul className="mt-1">
-            {pending.connections?.map((connection, index) => (
-              <li key={`${connection.label}-${index}`} className="truncate">{connection.label} · {connection.url}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {pending.members.length > 0 && <div className="mt-6 text-[12px] font-medium text-ink-secondary">{t("templates.teamMembers")}</div>}
-      <div className="mt-2 grid grid-cols-1 gap-x-10 md:grid-cols-2">
-        {pending.members.map((member, index) => (
-          <div key={`${member.name}-${index}`} className="flex min-h-[72px] items-center gap-3 border-b border-hairline/35 px-1 py-3">
-            {pending.pictures?.[index]
-              ? <img src={pending.pictures[index]!} alt="" className="size-9 shrink-0 rounded-lg object-cover" />
-              : (
-                <div className={cn("flex size-9 shrink-0 items-center justify-center rounded-lg text-[13px] font-semibold", TEAM_GLYPHS[index % TEAM_GLYPHS.length])}>
-                  {member.name.slice(0, 1).toUpperCase()}
-                </div>
-              )}
-            <div className="min-w-0">
-              <div className="truncate text-[14px] font-medium text-ink">{importedNames[index]}</div>
-              {importedNames[index] !== member.name && <div className="text-[11.5px] text-ink-secondary">{t("templates.newCopyOf", { name: member.name })}</div>}
-              <div className="mt-0.5 truncate text-[12.5px] text-ink-secondary">{member.title || t("templates.generalAssistant")}</div>
-            </div>
-          </div>
-        ))}
-      </div>
-      <div className="mt-6 flex items-start gap-2.5 rounded-xl bg-raised/45 px-4 py-3 text-[12.5px] leading-relaxed text-ink-secondary">
-        <Check size={15} className="mt-0.5 shrink-0 text-success" />
-        <p>
-          {pending.kind === "backup"
-            ? t("templates.backupSafety", { archived: pending.archivedBots ? t("templates.archivedBots", { count: pending.archivedBots }) : "" })
-            : org
-            ? pending.members.length ? t("orgLibrary.teamSafety") : t("orgLibrary.librarySafety")
-            : pending.library
-            ? t("teamImport.librarySafety")
-            : pending.version === 2
-            ? t("teamImport.sharedTeamSafety")
-            : pending.kind === "package"
-            ? t("templates.packageSafety")
-            : t("templates.legacySafety")}
-        </p>
-      </div>
-    </>
-  );
-}
-
 export function TeamLibraryPanel({
   onClose,
   onImported,
@@ -228,6 +110,8 @@ export function TeamLibraryPanel({
   const [source, setSource] = useState<ImportSource>("file");
   const [githubUrl, setGithubUrl] = useState("");
   const [githubLoading, setGithubLoading] = useState(false);
+  const [grokLink, setGrokLink] = useState<string | null>(null);
+  const [finishing, setFinishing] = useState<{ notes: NonNullable<PendingTeamImport["grokSetup"]>; bot: Bot; result: TeamImportResult } | null>(null);
   const [importing, setImporting] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [search, setSearch] = useState("");
@@ -242,6 +126,7 @@ export function TeamLibraryPanel({
   const [roomName, setRoomName] = useState("");
   const [creating, setCreating] = useState(false);
   const [sharing, setSharing] = useState<string | null>(null);
+  const [nestedDialog, setNestedDialog] = useState(false);
   const [orgListing, setOrgListing] = useState<OrgLibraryListing | null>(null);
   const [orgBusy, setOrgBusy] = useState<string | null>(null);
   const [orgNotice, setOrgNotice] = useState("");
@@ -295,7 +180,7 @@ export function TeamLibraryPanel({
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (sharing !== null) return;
+      if (sharing !== null || nestedDialog) return;
       if (event.key === "Escape" && !importing) {
         event.preventDefault();
         event.stopPropagation();
@@ -325,7 +210,7 @@ export function TeamLibraryPanel({
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [importing, onClose, pending, sharing]);
+  }, [importing, onClose, pending, sharing, nestedDialog]);
 
   const previewManifest = (preview: PendingTeamImport, nextSource: ImportSource) => {
     setPending(preview);
@@ -366,6 +251,7 @@ export function TeamLibraryPanel({
 
   const loadGithubUrl = async (requestedUrl: string) => {
     if (!requestedUrl.trim()) return;
+    if (isGrokLink(requestedUrl)) return setGrokLink(requestedUrl.trim());
     setGithubLoading(true);
     setError("");
     try {
@@ -395,29 +281,18 @@ export function TeamLibraryPanel({
     setImporting(true);
     setError("");
     try {
-      // SAFETY: this endpoint is owned by the app and returns imported bots.
-      const response = (await api("/api/teams/import?mode=add", {
-        method: "POST",
-        body: JSON.stringify(pending.manifest),
-      })) as {
-        bots: Bot[];
-        groups?: Group[];
-        routines?: Routine[];
-        connections?: unknown[];
-        presets?: unknown[];
-      };
-      for (const bot of response.bots) dispatch({ type: "botAdded", bot });
-      for (const group of response.groups ?? []) dispatch({ type: "groupPatched", group });
-      for (const routine of response.routines ?? []) dispatch({ type: "routinePatched", routine });
-      const first = response.bots.find((bot) => !bot.hidden);
-      if (first) dispatch({ type: "select", id: first.id });
+      const response = await addTemplate(pending.manifest, dispatch);
+      const { first } = response;
       track("team_imported", { members: response.bots.length, source, mode: "add", format: pending.kind });
-      onImported({
+      const result = {
         name: pending.name,
         members: response.bots.length,
         ...(response.connections?.length ? { connections: response.connections.length } : {}),
         ...(response.presets?.length ? { presets: response.presets.length } : {}),
-      });
+      };
+      // A Grok Bot with apps to connect or routines left out: offer the Chief of Staff's help before closing.
+      if (grokSetupLeft(pending.grokSetup) && first) setFinishing({ notes: pending.grokSetup, bot: first, result });
+      else onImported(result);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -587,7 +462,7 @@ export function TeamLibraryPanel({
         <header className="flex items-start justify-between gap-4 px-6 pb-3 pt-6 sm:px-8 sm:pt-7">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              {pending && (
+              {pending && !finishing && (
                 <button
                   onClick={() => {
                     setPending(null);
@@ -642,7 +517,7 @@ export function TeamLibraryPanel({
           </div>
         </header>
 
-        {pending ? (
+        {finishing ? <GrokFinishSetup notes={finishing.notes} imported={finishing.bot} onDone={() => onImported(finishing.result)} /> : pending ? (
           <>
             <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6 pt-6 sm:px-8">
               <TeamImportDetails pending={pending} importedNames={importedNames} org={pendingOrg !== null} />
@@ -797,6 +672,7 @@ export function TeamLibraryPanel({
               )}
               {tab === "explore" && (
                 <div>
+                  <ReadyBotGallery search={search} onDialog={setNestedDialog} onAdded={onClose} />
                   <div className="mb-3 text-[12px] font-medium text-ink-secondary">
                     {search ? t("templates.searchResults") : t("templates.communityTemplates")}
                   </div>
@@ -913,6 +789,7 @@ export function TeamLibraryPanel({
                       </div>
                     </div>
                   </div>
+                  <GrokImportFlow link={grokLink} onPreview={(preview) => { setGrokLink(null); previewManifest(preview, "grok"); }} />
                   {error && <div role="alert" className="mt-4 rounded-lg bg-danger/10 px-3 py-2 text-[12.5px] text-danger">{error}</div>}
                 </div>
               )}

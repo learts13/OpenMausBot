@@ -10,7 +10,7 @@ import { writeFileAtomic } from "./atomic.ts";
 import { withoutComputerEngine } from "./computer-engine-removal.ts";
 import { newBotDefaultsSchema, type NewBotDefaults } from "./new-bot-defaults.ts";
 import { replaySettings } from "./replay-settings.ts";
-import { EFFORT_LEVELS, type EffortLevel, type LiveSettings } from "../shared/wire.ts";
+import { EFFORT_LEVELS, type EffortLevel } from "../shared/wire.ts";
 import { isModelVariant, type InstanceConfigMap, type McpServerSpec, type ModelSelection } from "./contracts.ts";
 import { DEFAULT_WINDOW_MINUTES, MAX_WINDOW_MINUTES } from "./cache-keepwarm.ts";
 import { PROVIDER_ICON_PRESETS, providerIconError } from "../shared/provider-icon.ts";
@@ -395,7 +395,7 @@ const appConfigSchema = z.object({
     fishModel: z.enum(FISH_TTS_MODELS).optional(),
   }).optional(),
   decider: deciderConfigSchema.optional(),
-  /** Live calls: a GPT-Live OpenAI project key kept apart from every other OpenAI key; `voice` is a GPT-Live voice. */
+  /** Live calls: `key` is an OpenAI key for Live calls only; without one they use `openai.key`. `voice` is a GPT-Live voice. */
   live: z.object({
     key: optionalText,
     voice: z.string().trim().max(40).regex(/^[a-z]*$/, "a Live voice is a lowercase built-in voice name").optional(),
@@ -632,18 +632,6 @@ export function mcpCallTimeoutMinutes(cfg: AppConfig): number {
 
 export function cacheKeepWarmSettings(cfg: AppConfig): { enabled: boolean; windowMinutes: number } {
   return { enabled: cfg.cacheKeepWarm?.enabled === true, windowMinutes: cfg.cacheKeepWarm?.windowMinutes ?? DEFAULT_WINDOW_MINUTES };
-}
-
-export const LIVE_IDLE_MINUTES_DEFAULT = 5;
-
-export function liveSettingsFor(cfg: AppConfig): LiveSettings {
-  const minutes = cfg.live?.idleMinutes;
-  return {
-    configured: Boolean(cfg.live?.key?.trim()),
-    voice: cfg.live?.voice ?? "",
-    readTypedReplies: cfg.live?.readTypedReplies ?? true,
-    idleMinutes: Number.isInteger(minutes) && minutes! >= 1 && minutes! <= 60 ? minutes! : LIVE_IDLE_MINUTES_DEFAULT,
-  };
 }
 
 export function maxConcurrentBotThreads(cfg: { threads?: { maxConcurrentPerBot?: number } }): number {

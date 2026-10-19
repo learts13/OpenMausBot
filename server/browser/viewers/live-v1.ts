@@ -4,7 +4,7 @@
 import type { ServerResponse } from "node:http";
 
 import { BROWSER_HELD_ELSEWHERE } from "../../../shared/browser-held.ts";
-import { BrowserLiveError, parseBrowserLiveAction } from "../../browser-live.ts";
+import { BROWSER_ASLEEP_ERROR, BrowserLiveError, parseBrowserLiveAction } from "../../browser-live.ts";
 import type { BrowserService, BrowserTarget } from "../service.ts";
 import type { Viewer, ViewerOutput } from "./core.ts";
 
@@ -164,6 +164,10 @@ export class LiveV1 {
           this.#send(viewer, { type: "error", retryable: true, message: "The browser stream disconnected." });
           this.#close(viewer);
         }
+        return;
+      case "asleep":
+        this.#send(viewer, BROWSER_ASLEEP_ERROR);
+        this.#close(viewer);
         return;
       default:
         return;

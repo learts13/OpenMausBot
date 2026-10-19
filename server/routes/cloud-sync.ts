@@ -4,6 +4,7 @@ import { createReadStream } from "node:fs";
 import { cloudHomeConfigured } from "../cloud-home.ts";
 import { DATA_DIR } from "../config.ts";
 import { SyncError, createCloudSync, type CloudSync } from "../cloud-sync.ts";
+import { answerAsleep, cloudPowerNow, type CloudPower } from "../cloud-power.ts";
 import { PASS, type RouteContext, type RouteHandler } from "./table.ts";
 
 const FOLDER = String.raw`([\w-]{1,200})`;
@@ -14,6 +15,8 @@ export function createCloudSyncRoutes(options: {
   cloudHome: () => boolean;
   root?: string;
   statfs?: (path: string) => { totalBytes: number; freeBytes: number };
+  /** A Cloud home that agreed to sleep answers the desktop's held changes poll "asleep" (server/cloud-power.ts). */
+  power?: () => Pick<CloudPower, "sleeping" | "sleepSignal"> | null;
 }): RouteHandler & { close(): void; noteBotTurn(botId: string, threadId: string): void } {
   let sync: CloudSync | null = null;
   const service = () => sync ??= createCloudSync({ dataDir: options.dataDir, root: options.root, statfs: options.statfs });
@@ -28,9 +31,14 @@ export function createCloudSyncRoutes(options: {
     try {
       if (method === "GET" && path === "/api/sync") { json(res, 200, s.summary()); return; }
       if (method === "GET" && path === "/api/sync/changes") {
+        const power = options.power?.() ?? null;
+        if (power?.sleeping()) { answerAsleep(res, json); return; }
         const abort = new AbortController();
         req.on("close", () => abort.abort());
-        json(res, 200, await s.changes(Number(url.searchParams.get("cursor") ?? 0), Number(url.searchParams.get("waitMs") ?? 60_000), abort.signal));
+        const changes = await s.changes(Number(url.searchParams.get("cursor") ?? 0), Number(url.searchParams.get("waitMs") ?? 60_000),
+          power ? AbortSignal.any([abort.signal, power.sleepSignal()]) : abort.signal);
+        if (power?.sleeping()) { answerAsleep(res, json); return; }
+        json(res, 200, changes);
         return;
       }
       if (method === "GET" && path === "/api/sync/trash") { json(res, 200, s.trash()); return; }
@@ -76,5 +84,5 @@ export function createCloudSyncRoutes(options: {
   return Object.assign(handler, { close: () => { sync?.close(); sync = null; }, noteBotTurn: (botId: string, threadId: string) => sync?.noteBotTurn(botId, threadId) });
 }
 
-export const cloudSyncRoutes = createCloudSyncRoutes({ dataDir: DATA_DIR, cloudHome: () => cloudHomeConfigured() });
+export const cloudSyncRoutes = createCloudSyncRoutes({ dataDir: DATA_DIR, cloudHome: () => cloudHomeConfigured(), power: cloudPowerNow });
 export const noteSyncBotTurn = (botId: string, threadId: string) => cloudSyncRoutes.noteBotTurn(botId, threadId);

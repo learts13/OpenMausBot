@@ -10,8 +10,7 @@ vi.mock("react", async original => ({ ...await original<typeof import("react")>(
   useEffect: (effect: EffectCallback) => { f.effects.push(effect); },
 }));
 const dispatch = vi.hoisted(() => vi.fn());
-const bots = vi.hoisted(() => ({ list: [{ name: "Ember" }] as Array<{ name: string }> }));
-vi.mock("@/state/store", () => ({ useStore: () => ({ dispatch, state: { bots: bots.list } }) }));
+vi.mock("@/state/store", () => ({ useStore: () => ({ dispatch, state: { bots: [] } }) }));
 import { broughtView, CloudHomeNote, CloudMoveImport, CloudMoveSettings, CloudMoveSuggestion, leftBehindToShare, moveNextSteps, moveView } from "./CloudMove";
 import { OpenFilesButton } from "./OpenFilesButton";
 
@@ -61,23 +60,12 @@ it("Settings → MausBot Cloud: what comes and its size, that sign-ins stay here
   expect(html).toContain("Copy this computer's bots and chats");
   expect(html).toContain("from this computer to My Cloud. This computer keeps its own copy.");
   expect(html).toContain("About 1.5 GB: 4 bots, 37 chats, 1 rooms.");
-  // What lives where, said where things go over.
-  expect(html).toContain("Bots, chats and skills live on each side: My Cloud has its own, and this computer has its own: Ember. Nothing syncs by itself");
+  // What lives where is said once, by This computer and My Cloud above this card.
+  expect(html).not.toContain("live on each side");
   expect(html).toContain("API keys and sign-ins stay on this computer. On My Cloud you sign in to Claude or ChatGPT");
   expect(html).not.toContain("replaces them");
   button(settings(), "Copy to My Cloud")!.props.onClick!(); await flush();
   expect(vi.mocked(bridge.start).mock.calls).toEqual([["cloud"]]);
-});
-
-it("the places line names a few of this computer's bots, says when it has none, and is only on the Cloud's card", async () => {
-  bots.list = ["Ember", "Juno", "Kit", "Lark"].map(name => ({ name }));
-  await ready(settings());
-  expect(render(settings()).html).toContain("this computer has its own: Ember, Juno, and 2 more.");
-  bots.list = [];
-  expect(render(settings()).html).toContain("My Cloud has its own, and this computer has none of its own yet.");
-  await ready(settings("vps"), overview({ destination: VPS }));
-  expect(render(settings("vps")).html).not.toContain("live on each side");
-  bots.list = [{ name: "Ember" }];
 });
 
 it("Settings → Servers: a self-hosted server with work is replaced only after saying so, backed up first, and swaps back", async () => {

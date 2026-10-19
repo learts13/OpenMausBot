@@ -1,5 +1,6 @@
 /** Routine wire shapes: the routine and run records as they ride the REST
  * snapshot and the `routine` / `routine.run` live frames. */
+import type { LimitResetSchedule, LimitResetScheduleInput } from "./limit-reset.ts";
 import type { RoutineCronSchedule } from "./routine-schedule.ts";
 
 export interface RoutineIntervalWindow {
@@ -9,6 +10,7 @@ export interface RoutineIntervalWindow {
 
 export type RoutineSchedule =
   | RoutineCronSchedule
+  | LimitResetSchedule
   | { type: "once"; at: number }
   | { type: "daily"; time: string; weekdays: number[] }
   | {
@@ -25,6 +27,7 @@ export type RoutineSchedule =
 
 export type RoutineScheduleInput =
   | Extract<RoutineSchedule, { type: "once" | "daily" | "cron" }>
+  | LimitResetScheduleInput
   | {
     type: "interval";
     everyMinutes: number;

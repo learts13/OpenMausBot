@@ -62,7 +62,9 @@ function normalizeScheduleInput(args: Json): NormalizedSchedule {
         ? ["type", "every_minutes", "everyMinutes", "starts_at", "anchorAt", "weekdays", "every_day", "window_start", "window_end", "window", "all_day", "ends_at", "endsAt", "never_ends"]
         : type === "cron"
           ? ["type", "expression", "timeZone"]
-          : null;
+          : type === "limit_reset"
+            ? ["type", "engine", "repeat"]
+            : null;
   // Providers may send unused optional fields as null; any other unknown field refuses the call.
   const unsupported = fields && Object.keys(raw).find((key) => raw[key] != null && !fields.includes(key));
   if (unsupported) {
@@ -75,6 +77,7 @@ function normalizeScheduleInput(args: Json): NormalizedSchedule {
       return { error: `${error instanceof Error ? error.message : "Invalid cron schedule"}. ${SUPPORTED_SCHEDULES}` };
     }
   }
+  if (type === "limit_reset") return limitResetSchedule(raw.engine, raw.repeat);
   if (type === "once") {
     if (typeof raw.at !== "string" || !raw.at.trim()) {
       return { error: `A once schedule needs "at": a future RFC3339 date-time with an explicit offset, for example 2026-09-01T09:00:00+05:30.` };
@@ -190,6 +193,13 @@ function normalizeScheduleInput(args: Json): NormalizedSchedule {
     return { error: `Use an interval schedule for every-N-minutes work. ${SUPPORTED_SCHEDULES}` };
   }
   return { error: `Unknown schedule type "${type || "(missing)"}". ${SUPPORTED_SCHEDULES}` };
+}
+
+/** No engine means the bot's own, which the harness knows. */
+function limitResetSchedule(engine: unknown, repeat: unknown): NormalizedSchedule {
+  if (engine != null && (typeof engine !== "string" || !engine.trim())) return { error: 'engine must be an engine id such as "claude" or "codex"; omit it for your own engine.' };
+  if (repeat != null && repeat !== "once" && repeat !== "every_reset") return { error: 'repeat must be "once" or "every_reset".' };
+  return { schedule: { type: "limit_reset", ...(typeof engine === "string" ? { engine: engine.trim() } : {}), repeat: repeat === "every_reset" ? "every_reset" : "once" } };
 }
 
 type RoutineAction = "update" | "pause" | "resume" | "run_now" | "delete";
@@ -352,7 +362,11 @@ export async function callTriggerTool(name: string, args: Json, context: ToolCal
   }
   if (name === "create_trigger") {
     const when = args.when;
-    if (when !== "schedule" && when !== "webhook" && when !== "app_event") return { text: 'create_trigger needs when: "schedule", "app_event" or "webhook".', isError: true };
+    if (when !== "schedule" && when !== "webhook" && when !== "app_event" && when !== "limit_reset") return { text: 'create_trigger needs when: "schedule", "app_event", "webhook" or "limit_reset".', isError: true };
+    if (when !== "limit_reset") {
+      const limitOnly = ["engine", "repeat"].find((key) => args[key] !== undefined && args[key] !== null);
+      if (limitOnly) return { text: `${limitOnly} applies only to when=limit_reset.`, isError: true };
+    }
     const { fields, error } = triggerFields(args);
     if (error) return { text: error, isError: true };
     if (!fields.name || !fields.instructions) return { text: "create_trigger needs name and instructions.", isError: true };
@@ -372,6 +386,15 @@ export async function callTriggerTool(name: string, args: Json, context: ToolCal
         ...(fields.filter ? { filter: fields.filter } : {}), ...(fields.config ? { config: fields.config } : {}), ...(fields.runOn ? { runOn: fields.runOn } : {}),
       };
       return request({ action: "create", kind: "app", trigger, ...(forBotId ? { forBotId } : {}) }, context, `Created the app-event trigger “${String(fields.name)}”`);
+    }
+    if (when === "limit_reset") {
+      const misplaced = ["schedule", "webhook_event_types", "run_on_startup", "runOnStartup"].find((key) => args[key] !== undefined && args[key] !== null);
+      if (misplaced) return { text: `A limit-reset trigger runs when the engine's limit resets, so it takes no ${misplaced}.`, isError: true };
+      const timing = limitResetSchedule(args.engine, args.repeat);
+      if (timing.error) return { text: timing.error, isError: true };
+      const { eventTypes: _unused, ...routine } = fields;
+      return request({ action: "create", kind: "schedule", routine: { ...routine, schedule: timing.schedule }, ...(forBotId ? { forBotId } : {}) }, context,
+        `Created the trigger “${String(fields.name)}” for when the limit resets`);
     }
     const label = `the ${when === "webhook" ? "webhook" : "schedule"} trigger “${String(fields.name)}”`;
     if (when === "schedule") {

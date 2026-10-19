@@ -9,6 +9,7 @@ import {
   type LiveEventSourceLike,
   type LiveEventsPlatform,
 } from "./live-events";
+import { cloudAsleep, markCloudAwake, resetCloudPowerForTests } from "./cloud-power";
 
 class FakeTarget {
   private readonly listeners = new Map<string, Set<() => void>>();
@@ -90,7 +91,7 @@ function harness(options?: { online?: boolean; visible?: boolean; now?: number }
 }
 
 beforeEach(() => vi.useFakeTimers());
-afterEach(() => vi.useRealTimers());
+afterEach(() => { vi.useRealTimers(); resetCloudPowerForTests(); });
 
 describe("live events URL", () => {
   it("builds cold and resumable stream URLs", () => {
@@ -325,5 +326,39 @@ describe("live event liveness predicates", () => {
     expect(isLivePing({ kind: "message" })).toBe(false);
     expect(shouldReconnectLiveEvents(0, LIVE_EVENTS_STALE_MS - 1)).toBe(false);
     expect(shouldReconnectLiveEvents(0, LIVE_EVENTS_STALE_MS)).toBe(true);
+  });
+});
+
+describe("a Cloud home that goes to sleep", () => {
+  it("closes the stream on its sleeping frame and stays closed, whatever the timers, until the person is back", () => {
+    const test = harness();
+    const onFrame = vi.fn(), onError = vi.fn();
+    const stop = openLiveEvents({ onFrame, onError, onSnapshotRequired: async () => true, staleMs: 1_000, retryMinMs: 100, retryMaxMs: 100 }, test.platform);
+    test.sources[0].open();
+    test.sources[0].message({ kind: "message" }, "run00000:4");
+    test.sources[0].message({ kind: "power", state: "sleeping" } as { kind: string });
+    expect(cloudAsleep()).toBe(true);
+    expect(test.sources[0].close).toHaveBeenCalledOnce();
+    expect(onError).not.toHaveBeenCalled();
+    expect(onFrame).toHaveBeenCalledOnce();
+    test.setNow(60_000);
+    vi.advanceTimersByTime(60_000);
+    test.windowTarget.emit("focus");
+    test.windowTarget.emit("online");
+    test.documentTarget.emit("visibilitychange");
+    expect(test.sources).toHaveLength(1);
+    markCloudAwake();
+    expect(test.sources).toHaveLength(2);
+    expect(test.sources[1].url).toBe("/api/events?since=run00000%3A4");
+    stop();
+  });
+
+  it("ignores any other power frame", () => {
+    const test = harness();
+    const stop = openLiveEvents({ onFrame: vi.fn(), onSnapshotRequired: async () => true }, test.platform);
+    test.sources[0].message({ kind: "power", state: "awake" } as { kind: string });
+    expect(cloudAsleep()).toBe(false);
+    expect(test.sources[0].close).not.toHaveBeenCalled();
+    stop();
   });
 });

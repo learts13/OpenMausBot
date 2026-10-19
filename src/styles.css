@@ -126,6 +126,11 @@
   --animate-ripple: ripple 0.9s cubic-bezier(0.22, 1, 0.36, 1) both;
   /* onboarding: a bolt travelling from a webhook address to the bot */
   --animate-bolt: bolt 0.9s cubic-bezier(0.77, 0, 0.175, 1) infinite;
+  /* Team map: a computer whose bot is acting breathes; its link to the bot carries a slow flow of dashes. */
+  --animate-computer-glow: computer-glow 2.4s ease-in-out infinite;
+  --animate-link-flow: link-flow 1.1s linear infinite;
+  /* Team map: a card's border acknowledging a message sent to it from the map. */
+  --animate-sent-border: sent-border 1.2s ease-out forwards;
 
   /* Defaults = Midnight. Kept here so the app is never unstyled. */
   --color-app: #070707;
@@ -1333,6 +1338,21 @@ body {
 @keyframes ripple {
   from { box-shadow: 0 0 0 0 color-mix(in oklab, var(--color-accent) 55%, transparent); }
   to { box-shadow: 0 0 0 14px color-mix(in oklab, var(--color-accent) 0%, transparent); }
+}
+@keyframes computer-glow {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+@keyframes link-flow {
+  to { stroke-dashoffset: -20; }
+}
+@keyframes sent-border {
+  0%, 25% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-computer-glow, .animate-link-flow { animation: none; }
+  .animate-sent-border { animation: none; }
 }
 @keyframes bolt {
   0% { transform: translateX(-4px) scale(0.9); opacity: 0.2; }

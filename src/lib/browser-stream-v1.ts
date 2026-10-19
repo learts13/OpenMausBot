@@ -243,9 +243,10 @@ export function createLiveStreamClient(botId: string, events: PreviewStreamEvent
       let retryable = !(event instanceof MessageEvent);
       if (event instanceof MessageEvent) {
         try {
-          const data = JSON.parse(event.data) as { retryable?: unknown; message?: unknown };
+          const data = JSON.parse(event.data) as { retryable?: unknown; message?: unknown; asleep?: unknown };
           retryable = data.retryable === true;
-          if (typeof data.message === "string") events.onMessage?.({ type: "notice", message: data.message });
+          if (data.asleep === true) events.onMessage?.({ type: "asleep" });
+          else if (typeof data.message === "string") events.onMessage?.({ type: "notice", message: data.message });
         } catch {}
       }
       dropped(live, retryable);

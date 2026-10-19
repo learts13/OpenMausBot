@@ -1211,7 +1211,7 @@ const SHOT_CMD = panelShotCommand();
 const MAX_FRAME_BYTES = 8 * 1024 * 1024;
 const FRAME_TOO_LARGE = "the cloud computer's frame exceeds the 8 MB limit";
 
-async function readFileBase64(cfg: AppConfig, boxId: string, path: string, signal?: AbortSignal): Promise<string | null> {
+export async function readFileBase64(cfg: AppConfig, boxId: string, path: string, signal?: AbortSignal): Promise<string | null> {
   let bytes: Buffer | null = null;
   let tooLarge = false;
   try {

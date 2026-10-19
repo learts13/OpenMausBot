@@ -687,7 +687,7 @@ export function ComputerPanel({
         setRetry((n) => n + 1);
         return;
       }
-      api(threadPath("computer"))
+      api(threadPath("computer"), { background: true })
         .then((status) => {
           if (!alive) return;
           const state = typeof status.box?.state === "string" ? status.box.state : null;

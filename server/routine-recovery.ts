@@ -18,6 +18,8 @@ export interface RoutineFailureFacts {
   stalled?: boolean;
   trialCredit?: string;
   limitResetsAt?: number;
+  /** A backup engine takes over from one whose usage limit refused the run. */
+  backupReady?: boolean;
 }
 
 export type RoutineFailureClass =
@@ -136,6 +138,10 @@ export function recoverRun(run: RoutineRun, failure: string, facts: RoutineFailu
   }
   if (verdict.kind === "retry") return requeueOnce(run, verdict.cause, failure, now) ? { queued: true } : { queued: false, error: again };
   if (verdict.kind === "final") return { queued: false, error: again };
+  if (verdict.cause === "usage_limit" && facts.backupReady && requeueOnce(run, "usage_limit", failure, now, now + RETRY_MS)) {
+    run.attention = "Starting again on the backup engine: this bot's engine reached its usage limit";
+    return { queued: true };
+  }
   const first = firstNotice(notices, run.botId, verdict.cause, now);
   const reset = verdict.resetsAt;
   if (reset && reset > now && reset - now <= LIMIT_WAIT_MS && requeueOnce(run, "usage_limit", failure, now, reset + AFTER_RESET_MS)) {

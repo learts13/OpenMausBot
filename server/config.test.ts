@@ -42,8 +42,6 @@ import { cacheUntilConfigChanges,
   browserEngineAttachCdpUrl,
   withInstanceCli,
   WORKSPACE_CREDENTIAL_ENV,
-  liveSettingsFor,
-  LIVE_IDLE_MINUTES_DEFAULT,
   mergeOpenCodeProviderKeys,
   openCodeProviderKeys,
   OPENCODE_PROVIDER_KEY_LIMIT,
@@ -1966,15 +1964,6 @@ describe("customMcpServers with url entries", () => {
 });
 
 describe("live settings", () => {
-  it("defaults to a 5 minute idle hang-up and reading typed replies", () => {
-    expect(LIVE_IDLE_MINUTES_DEFAULT).toBe(5);
-    expect(liveSettingsFor({} as AppConfig)).toEqual({ configured: false, voice: "", readTypedReplies: true, idleMinutes: 5 });
-  });
-  it("reports saved values and never the key", () => {
-    const settings = liveSettingsFor({ live: { key: "sk-test", voice: "sol", readTypedReplies: false, idleMinutes: 12 } } as AppConfig);
-    expect(settings).toEqual({ configured: true, voice: "sol", readTypedReplies: false, idleMinutes: 12 });
-    expect(JSON.stringify(settings)).not.toContain("sk-test");
-  });
   it("accepts idle minutes from 1 to 60 only", () => {
     expect(() => parseConfigPatch({ live: { idleMinutes: 0 } })).toThrow();
     expect(() => parseConfigPatch({ live: { idleMinutes: 61 } })).toThrow();

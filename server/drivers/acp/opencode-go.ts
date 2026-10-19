@@ -738,6 +738,7 @@ const support = (loadCatalog: OpenCodeCatalogLoader): AcpSupport => ({
     needsNode: true,
   },
   spawnArgs: () => ["acp"],
+  shareProcess: true,
   credentialEnv: ["OPENCODE_API_KEY", ...OPENCODE_PROVIDER_ENV],
   selectModel: { configId: "model" },
   fallbackModel: (sessionConfig, catalogDefault) => {
@@ -746,6 +747,7 @@ const support = (loadCatalog: OpenCodeCatalogLoader): AcpSupport => ({
     return preferredOpenCodeModel(offered, catalogFromOpenCodeSession(sessionConfig)?.current) || null;
   },
   modelVariants: true,
+  ownMcpOverHttp: true,
   resolveTurnModel: (model, env) => model ? ensureOpenCodeInjectModel(model, env) : model,
   transformEnv: withholdProviderKeysWhenManaged,
   spawnFingerprint: openCodeLoginsFingerprint,

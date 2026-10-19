@@ -37,7 +37,7 @@ import { askInputSummary, commandSummary, toolDetailPreview } from "../tool-summ
 import { classifyError, computeBackoff, interruptibleDelay, RETRY_MAX_ATTEMPTS, USAGE_LIMIT } from "./retry.ts";
 import { claudeApiErrorMessage, claudeLimitRefusal, claudeUsageLimit, claudeLimitMessage, type ClaudeLimit } from "./claude-limits.ts";
 import { TEAM_TOOLS_FAILED, teamToolsFailed } from "./team-tools.ts";
-import { sessionIdlePolicy } from "./session-idle.ts";
+import { engineIdleMs, sessionIdlePolicy } from "./session-idle.ts";
 import { parseVersionTriple, versionAtLeast } from "./acp/core.ts";
 import {
   applyClaudeInject,
@@ -962,7 +962,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     const sessions = new Map<string, Session>();
     const warmContracts = new Map<string, KeepWarmContract>();
     const warmHolds = new Map<string, number>();
-    const { idleMs: SESSION_IDLE_MS } = sessionIdlePolicy("CLAUDE");
+    const sessionIdle = sessionIdlePolicy("CLAUDE");
 
     const stopSession = (session: Session) => {
       void killCliTree(session.child).then((stopped) => {
@@ -995,7 +995,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       if (!s) return;
       if (s.idleTimer) clearTimeout(s.idleTimer);
       const held = (warmHolds.get(threadId) ?? 0) - Date.now();
-      s.idleTimer = setTimeout(() => closeSession(threadId, "idle"), Math.min(2_147_483_647, Math.max(SESSION_IDLE_MS, held)));
+      s.idleTimer = setTimeout(() => closeSession(threadId, "idle"), Math.min(2_147_483_647, Math.max(engineIdleMs(threadId, sessionIdle), held)));
       s.idleTimer.unref?.();
     };
     const writeUser = (s: Session, threadId: string, promptMsg: ClaudeUserMessage): Promise<boolean> => {

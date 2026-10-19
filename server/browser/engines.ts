@@ -8,13 +8,13 @@ import type { BrowserLive } from "../browser-live.ts";
 import type { BrowserRuntime, BrowserSpawnSpec } from "../browser-runtime.ts";
 import type { StepContext } from "../browser-steps.ts";
 import type { FillLoginDeps } from "../login-fill.ts";
-import { acceptLanguageFor, LocalBackend } from "./backends.ts";
+import { LocalBackend } from "./backends.ts";
 import { sandboxDisabled } from "./chrome/host-setup.ts";
 import type { HostKind } from "./chrome/flags.ts";
 import { ChromeLauncher } from "./chrome/launcher.ts";
 import { ProcessRegistry, sweep } from "./chrome/processes.ts";
 import { browserRoot } from "./chrome/profile.ts";
-import { browserLanguage, browserTimeZone } from "./chrome/wrapper.ts";
+import { browserLanguage, browserTimeZone, languageList } from "./chrome/wrapper.ts";
 import { displayScreen } from "./display.ts";
 import type { Download } from "./cdp/downloads.ts";
 import { BrowserService, type BrowserTarget } from "./service.ts";
@@ -61,6 +61,7 @@ export class ChromeEngine {
   readonly #registry: ProcessRegistry;
   readonly #options: ChromeEngineOptions;
   #timer: ReturnType<typeof setInterval> | null = null;
+  #inUse = false;
   #cleared = false;
 
   constructor(options: ChromeEngineOptions) {
@@ -82,7 +83,7 @@ export class ChromeEngine {
       },
       screen: () => (screen ??= displayScreen(options.host, { platform, env })),
       locale: () => locale,
-      acceptLanguages: () => (locale ? acceptLanguageFor(locale).replace(/;q=[\d.]+/gu, "") : "en-US,en"),
+      acceptLanguages: () => languageList(locale ?? undefined),
       timezone: () => browserTimeZone(env, platform) ?? null,
       egressPort: (key) => options.egressPort(key),
       registry: this.#registry,
@@ -114,29 +115,28 @@ export class ChromeEngine {
   }
 
   /**
-   * In use, it prepares Chrome before a bot needs it and closes idle browsers and stray processes every minute. Not in
-   * use, it only clears, once, what an earlier run of the engine left behind, so a server that never turned it on
-   * lists no processes.
+   * In use, it prepares Chrome before a bot needs it. In use, or while a Chrome it started still runs, it closes idle
+   * browsers and stray processes every minute. Otherwise it only clears, once, what an earlier run of the engine left
+   * behind, so a server that never turned it on lists no processes.
    */
   start({ inUse, prepare }: { inUse: boolean; prepare: boolean }): void {
-    const root = browserRoot(this.#options.dataDir);
-    const tick = () => {
-      void this.service.closeIdle().catch(() => undefined);
-      void sweep({ root, registry: this.#registry }).catch(() => undefined);
-    };
-    if (!inUse) {
-      if (this.#timer) clearInterval(this.#timer);
-      this.#timer = null;
-      if (!this.#cleared && this.#everUsed()) tick();
-      this.#cleared = true;
-      return;
-    }
+    const starting = inUse && !this.#inUse;
+    this.#inUse = inUse;
+    if (!inUse && !this.#cleared && this.#everUsed()) this.#tick();
     this.#cleared = true;
-    if (prepare && this.launcher.plan().kind !== "legacy") void this.launcher.prepare();
-    if (this.#timer) return;
-    tick();
-    this.#timer = setInterval(tick, SWEEP_MS);
+    if (inUse && prepare && this.launcher.plan().kind !== "legacy") void this.launcher.prepare();
+    if (starting) this.#tick();
+    this.#timer ??= setInterval(() => { if (this.#inUse || this.#running()) this.#tick(); }, SWEEP_MS);
     this.#timer.unref?.();
+  }
+
+  #tick(): void {
+    void this.service.closeIdle().catch(() => undefined);
+    void sweep({ root: browserRoot(this.#options.dataDir), registry: this.#registry }).catch(() => undefined);
+  }
+
+  #running(): boolean {
+    return this.service.profiles().some((profile) => profile.run || profile.starting) || this.#registry.list().length > 0;
   }
 
   /** Whether this engine ever made a profile in this data folder. */

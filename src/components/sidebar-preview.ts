@@ -2,7 +2,7 @@ import { approvalCardOutcome } from "./ApprovalCard";
 import type { Bot, Group, InstanceInfo, Message } from "@/state/store";
 import type { RoutineRunCardData } from "../../shared/routine-run";
 import { peerLine } from "@/lib/peer-message";
-import { lastNonReceipt } from "@/lib/receipts";
+import { isReceipt } from "@/lib/receipts";
 import { activityPreview, botEngine } from "@/lib/failed-turn";
 import { t } from "@/lib/i18n";
 import { sidebarConnectorPreview, sidebarGoalRunPreview } from "@/lib/sidebar-layout";
@@ -11,17 +11,21 @@ import { plainPreviewText } from "@/lib/plain-preview";
 import { isClientCancellation } from "../../shared/client-cancel";
 import { roomWorkingPreview } from "@/lib/room-threads";
 
+/** The newest message a preview can show. A receipt or a screen frame says nothing about the conversation on its own. */
+export function lastPreviewable<T extends { kind: string }>(messages: readonly T[] | undefined): T | undefined {
+  return messages?.findLast((message) => !isReceipt(message) && message.kind !== "screen");
+}
+
 export function botPreview(bot: Bot, visible: Message[], instances: InstanceInfo[], advanced: boolean): string {
   if (bot.activity === "waiting-on-you") return t("sidebar.preview.waiting");
   if (bot.waitingForTeammates) return t("sidebar.preview.waitingOnTeammate");
   if (bot.busy) return t("sidebar.preview.working");
-  const last = lastNonReceipt(visible);
+  const last = lastPreviewable(visible);
   if (!last) return "";
   if (last.kind === "options" && last.card) {
     return (last.card.requestId && last.card.tool && !last.card.questionRequest && approvalCardOutcome(last.card)) || last.card.title;
   }
   if (last.kind === "activity" && last.tool) return activityPreview(last.tool, botEngine(bot, instances), last.dataResult, advanced);
-  if (last.kind === "screen") return t("sidebar.preview.screenFrame");
   if (last.kind === "connector" && last.connector) return sidebarConnectorPreview(last.connector, t);
   if (last.kind === "routine.run" && last.routineRun) return automationRunPreview(last.routineRun);
   const peer = peerLine(last);
@@ -44,7 +48,7 @@ export function groupPreview(group: Group, bots: Bot[], instances: InstanceInfo[
   const working = roomWorkingPreview(group, (botId) => bots.find((b) => b.id === botId)?.name);
   if (working) return working;
   if (group.working) return t("sidebar.preview.teamWorking");
-  const last = lastNonReceipt(group.messages);
+  const last = lastPreviewable(group.messages);
   if (!last) return t("sidebar.preview.noMessages");
   if (last.kind === "text" && last.role !== "user" && isClientCancellation(last.text ?? "")) {
     const stopped = t("chat.turnStopped");

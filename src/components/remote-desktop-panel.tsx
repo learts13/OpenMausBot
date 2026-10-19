@@ -20,7 +20,7 @@ function viewerAddress(raw: unknown): string {
 }
 
 function routineScheduleLabel(routine: Routine) {
-  if (routine.schedule.type === "cron") return scheduleLabel(routine.schedule);
+  if (routine.schedule.type === "cron" || routine.schedule.type === "limit_reset") return scheduleLabel(routine.schedule);
   if (routine.schedule.type === "once") {
     return new Date(routine.schedule.at).toLocaleString([], {
       month: "short",

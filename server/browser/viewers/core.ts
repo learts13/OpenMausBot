@@ -70,6 +70,8 @@ export type ViewerOutput =
   | { type: "authPrompt"; tabId: string; id: string; origin: string; realm: string }
   | { type: "authPromptClosed"; id: string }
   | { type: "starting" }
+  /** The browser closed unused and the view stays; "awake" when it starts again. */
+  | { type: "asleep" | "awake" }
   | { type: "gone"; reason: string };
 
 export interface ViewerOptions {
@@ -99,6 +101,8 @@ export interface HubHost {
   tabs(): Tab[];
   tab(id: string): Tab | undefined;
   running(): Promise<void>;
+  /** A person used the browser: its idle time starts again. */
+  used(): void;
   /** The largest page the browser's windows may show on its screen; null when nothing limits it. */
   pageLimit(): { width: number; height: number } | null;
   take(owner: string): Promise<TakeResult>;
@@ -519,6 +523,7 @@ export class ViewerHub {
     const size = options.size ? requestedSize(options.size.width, options.size.height) : null;
     if (size && options.canOperate && this.host.control.owner === null) viewer.requested = { ...size, order: ++this.#order };
     this.viewers.add(viewer);
+    this.host.used();
     try {
       viewer.push({ type: "starting" });
       await this.host.running();
@@ -711,14 +716,15 @@ export class ViewerHub {
 
   started(): void {
     this.#applied = null;
+    this.broadcast({ type: "awake" });
     void this.applyViewport().then(() => this.tabsChanged()).catch(() => undefined);
   }
 
-  stopped(reason: string): void {
+  stopped(reason: "closed" | "crashed" | "asleep"): void {
     this.#applied = null;
     for (const viewer of this.viewers) {
       void viewer.bind(null);
-      viewer.push({ type: "gone", reason });
+      viewer.push(reason === "asleep" ? { type: "asleep" } : { type: "gone", reason });
     }
   }
 
@@ -773,7 +779,11 @@ export class ViewerHub {
 
   async input(viewer: Viewer, message: Record<string, unknown>): Promise<void> {
     const control = this.host.control;
+    if (message.type !== "resize" && message.type !== "frameCap") this.host.used();
     switch (message.type) {
+      case "wake":
+        await this.host.running().catch(() => viewer.push({ type: "asleep" }));
+        return;
       case "takeControl": {
         const taking = this.host.take(viewer.id);
         this.broadcastControl();

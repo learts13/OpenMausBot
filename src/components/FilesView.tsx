@@ -100,7 +100,7 @@ function FilesPage({ bridge }: { bridge: CloudFilesBridge }) {
   if (!state) return null;
   if (state.phase === "unavailable") return <Unavailable />;
   return <>
-    {state.phase === "offline" && <p role="status" className="rounded-xl bg-card px-4 py-3 text-[13px] text-ink-secondary">{t("files.offline")}</p>}
+    {(state.phase === "offline" || state.phase === "asleep") && <p role="status" data-files-phase={state.phase} className="rounded-xl bg-card px-4 py-3 text-[13px] text-ink-secondary">{t(state.phase === "asleep" ? "files.asleep" : "files.offline")}</p>}
     {state.phase === "signed-out" && <div role="status" className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-card px-4 py-3">
       <p className="text-[13px] text-ink">{t("files.signedOut")}</p>
       <button type="button" className="ui-button" onClick={() => dispatch(SETTINGS)}>{t("files.openSettings")}</button>

@@ -28,8 +28,7 @@ exception: `OMB_OPENAI_LIVE_URL` crosses when it is a loopback
 `http://127.0.0.1:PORT` (the fake GPT-Live that
 `node --experimental-strip-types server/testing/fake-openai-live.ts` prints),
 and `OMB_OPENAI_LIVE_KEY` crosses only with it, so that key can only ever
-reach the fake. `OMB_PRO_PLAN` crosses only as `1`: Live calls from a phone need a Pro plan,
-and that is how a server the desktop app did not start says so.
+reach the fake.
 
 Pass the printed URL explicitly from a second terminal:
 
@@ -106,6 +105,10 @@ The [switchable local environments recipe](local-environments.md) verifies
 creating, switching between and recovering named local environments by hand on
 a packaged desktop install; the control surface cannot drive it, so it is not
 in the map above.
+
+The [Send to My Cloud fixture](cloud-send.md) runs this computer's server and a
+Cloud home with the desktop's own wiring between them, and shows Settings →
+MausBot Cloud and My Cloud's strip in the real renderer.
 
 The [MCP sign-in fixture](mcp-sign-in.md) checks remote sign-in, callback URL
 paste-back, MCP tools and logout cancellation through the real settings panel

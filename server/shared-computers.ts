@@ -46,6 +46,7 @@ const DELIVERY_MS = 10_000;
 const RECONNECTING_MS = 60_000;
 const RECONNECT_WAIT_MS = 15_000;
 const OFFLINE = "This shared computer is offline. Keep its desktop app open; do not substitute files on the server.";
+const RESTARTING = "This server is restarting. Lending resumes by itself once it is back.";
 const lentButOffline = (name: string, seen: number, device: "PC" | "Mac" | "computer" = "computer") => `${name} is lent but has been offline for ${Math.max(1, Math.round((Date.now() - seen) / 60_000))} min: OpenMausBot on it is closed, the ${device} is asleep or locked, or its desktop app is signed out of MausBot Cloud. Tell the person in one sentence to open OpenMausBot on that ${device}; do not substitute files on the server.`;
 
 /** Aborts when the client of a long poll goes away before it is answered. */
@@ -87,11 +88,13 @@ export function provenRequestPerson(
  * Keyed by registering session and desktop id, so no other session takes over an id and a turn sees only its person's computers. */
 export class SharedComputers {
   private computers = new Map<string, Computer>();
+  private closed = false;
   private sessionLive: (id: string) => boolean;
   private lent: LentComputers | undefined;
   constructor(sessionLive: (id: string) => boolean, lent?: LentComputers) { this.sessionLive = sessionLive; this.lent = lent; }
   private static key(session: string, id: string) { return `${session}\n${id}`; }
   register(registration: Registration, owner: SharedComputerOwner, secret: string) {
+    if (this.closed) throw failure(RESTARTING, 503);
     if (!/^[a-f0-9]{64}$/.test(secret)) throw failure("Invalid computer credential", 400);
     const key = SharedComputers.key(owner.session, registration.id);
     const old = this.computers.get(key);
@@ -122,7 +125,9 @@ export class SharedComputers {
     }
   }
   private online(entry: Computer) { return this.sessionLive(entry.owner.session) && Date.now() - entry.seen < 40_000; }
+  /** The desktop takes a 401 or 403 for a lost sign-in and signs in again, so a stopping server answers 503. */
   private authorize(id: string, session: string, secret: string) {
+    if (this.closed) throw failure(RESTARTING, 503);
     const entry = this.computers.get(SharedComputers.key(session, id));
     if (!entry || !this.sessionLive(session) || !/^[a-f0-9]{64}$/.test(secret) || !timingSafeEqual(Buffer.from(secret), Buffer.from(entry.secret))) throw failure("Shared computer is disconnected or not authorized", 403);
     return entry;
@@ -253,6 +258,7 @@ export class SharedComputers {
       : `${known.name} is no longer lent: lending was turned off on that ${device}. Do not substitute files on the server.`;
   }
   close() {
+    this.closed = true;
     for (const entry of this.computers.values()) {
       entry.wake?.();
       for (const job of entry.jobs.values()) this.finish(entry, job, failure("Workspace stopped. Inspect any in-flight action before retrying."));

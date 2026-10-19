@@ -100,6 +100,11 @@ function savedImage(result: unknown, base: string): string | null {
   return file;
 }
 
+/** "en-US,en;q=0.9" → "en-US,en". */
+export function headerLanguages(header: string | undefined): string {
+  return (header ?? "").split(",").map((part) => part.split(";")[0]!.trim()).filter(Boolean).join(",");
+}
+
 export function identityChecks(reports: ProbeReports, expected: string): IdentityReadout["checks"] {
   const places: Array<[string, ReportedIdentity | undefined]> = [["page", reports.page], ["dedicated worker", reports.worker], ["service worker", reports.serviceworker], ["cross-site frame", reports.frame]];
   const page = reports.page;
@@ -114,22 +119,30 @@ export function identityChecks(reports: ProbeReports, expected: string): Identit
     { check: "no place reports a headless brand", pass: places.every(([, report]) => !JSON.stringify(report?.brands ?? []).includes("Headless")), detail: JSON.stringify(page?.brands ?? null) },
     { check: "page is 1280x720 inside", pass: page?.inner?.[0] === 1280 && page.inner[1] === 720, detail: `inner ${page?.inner?.join("x")}, outer ${page?.outer?.join("x")}, screen ${page?.screen?.join("x")}, dpr ${page?.dpr}` },
     { check: "navigator.webdriver is false", pass: page?.webdriver === false, detail: String(page?.webdriver) },
+    { check: "navigator.languages are the Accept-Language header's, in order", pass: Boolean(page?.languages.length) && page?.languages.join(",") === headerLanguages(reports.headers.document?.["accept-language"]), detail: `${JSON.stringify(page?.languages ?? null)} against ${reports.headers.document?.["accept-language"] ?? "no header"}` },
     { check: "plugins and window.chrome are present", pass: (page?.plugins ?? 0) > 0 && page?.windowChrome === "object", detail: `${page?.plugins} plugins, window.chrome ${page?.windowChrome}` },
   ];
 }
 
-export async function verifyBrowserIdentity(options: {
+export interface BotBrowserOptions {
   engine: string;
   chrome: string;
   out: string;
-  publicPages?: boolean;
   sessionPrefix?: string;
   log?: (line: string) => void;
-}): Promise<{ readout: IdentityReadout; public: PublicVerdict[] }> {
+}
+
+/** A browser tool call, as the bot makes it. */
+export type BotCall = (name: string, args: Record<string, unknown>) => Promise<unknown>;
+
+/** A bot's browser as the server starts it, on a throwaway profile, for as long as `work` runs: agent-browser drives the
+ * Chrome named here through the same launcher, identity connection and egress gate. `work` gets the bot's tool calls and
+ * the ports the gate let through. */
+export async function withBotBrowser<T>(options: BotBrowserOptions, work: (call: BotCall, gated: ReadonlySet<number>, launcher: ChromeLauncher) => Promise<T>): Promise<T> {
   const log = options.log ?? (() => {});
   mkdirSync(options.out, { recursive: true });
-  const work = mkdtempSync(join(options.out, "run-"));
-  const profiles = join(work, "tmp");
+  const scratch = mkdtempSync(join(options.out, "run-"));
+  const profiles = join(scratch, "tmp");
   mkdirSync(profiles);
   // agent-browser's socket path must stay under 104 bytes; temporary folders on macOS are long.
   const sockets = mkdtempSync(join(process.platform === "win32" ? tmpdir() : "/tmp", "omb-id-"));
@@ -137,11 +150,11 @@ export async function verifyBrowserIdentity(options: {
   // runner's HOME is a temporary folder, so the real one comes from the user database.
   const home = userInfo().homedir;
   const session = `${options.sessionPrefix ?? "omb-identity"}-${randomBytes(3).toString("hex")}`;
-  const launcher = new ChromeLauncher({ dataDir: join(work, "data"), env: { ...process.env, HOME: home, USERPROFILE: home, OMB_CHROME_PATH: options.chrome }, log });
+  const launcher = new ChromeLauncher({ dataDir: join(scratch, "data"), env: { ...process.env, HOME: home, USERPROFILE: home, OMB_CHROME_PATH: options.chrome }, log });
   // Where the launcher adds nothing (OMB_BROWSER_LEGACY_SHELL=1, a headless shell), agent-browser would otherwise look for a
   // browser of its own, such as an installed Google Chrome, instead of the one named here.
   const launcherEnv = launcher.env();
-  // Like every bot browser, this one browses through an egress gate; desktop rules let it reach the loopback probe page.
+  // Like every bot browser, this one browses through an egress gate; desktop rules let it reach loopback pages.
   const decided = new Set<number>();
   const gate = await openGate({ decide: (target, addresses) => {
     decided.add(target.port);
@@ -157,41 +170,50 @@ export async function verifyBrowserIdentity(options: {
     applyViewport: (value) => setBrowserViewport(value.command, value.env),
     closeBrowser: (name, value) => closeBrowserSession(value.command, browserRuntimeEnv({ ...value.env, AGENT_BROWSER_SESSION: name })),
   });
-  const probe = await startIdentityProbe().catch(async (error: unknown) => { await gate.close(); throw error; });
-  const call = (name: string, args: Record<string, unknown>) => runtime.agentRpc(session, spec, "tools/call", { name, arguments: args });
   try {
     await prepareBrowserSessionState(options.engine, session, { env: spec.env, persistent: false });
     await launcher.prepare();
-    await call("agent_browser_open", { url: probe.url });
-    const reports = await probe.complete(30_000);
-    const major = String(reports.page?.high?.uaFullVersion ?? "").split(".")[0] ?? "";
-    const expected = expectedUserAgent(major);
-    const gated = { check: "the page loaded through the egress gate", pass: decided.has(Number(new URL(probe.url).port)), detail: `the gate decided on ports ${[...decided].join(", ") || "none"}` };
-    const readout: IdentityReadout = { chrome: launcher.describe(), expectedUserAgent: expected, reports, checks: [...identityChecks(reports, expected), gated] };
-    writeFileSync(join(options.out, "identity.json"), `${JSON.stringify(readout, null, 2)}\n`);
-    const verdicts: PublicVerdict[] = [];
-    for (const site of options.publicPages ? PUBLIC_PAGES : []) {
-      const started = Date.now();
-      try {
-        await call("agent_browser_open", { url: site.url });
-        await new Promise((done) => setTimeout(done, site.waitMs));
-        const value = evalValue(await call("agent_browser_eval", { script: `JSON.stringify(${site.extract})` }));
-        const screenshot = savedImage(await call("agent_browser_screenshot", {}).catch(() => null), join(options.out, site.name));
-        verdicts.push({ name: site.name, ...site.verdict(value as never), ...(screenshot ? { screenshot } : {}) });
-      } catch (error) {
-        verdicts.push({ name: site.name, pass: false, detail: `could not read the page: ${error instanceof Error ? error.message : String(error)}` });
-      }
-      log(`${site.name}: ${verdicts.at(-1)!.pass ? "pass" : "FAIL"} (${verdicts.at(-1)!.detail}) in ${Date.now() - started} ms`);
-    }
-    if (verdicts.length) writeFileSync(join(options.out, "public.json"), `${JSON.stringify(verdicts, null, 2)}\n`);
-    return { readout, public: verdicts };
+    return await work((name, args) => runtime.agentRpc(session, spec, "tools/call", { name, arguments: args }), decided, launcher);
   } finally {
     await closeBrowserSession(options.engine, browserRuntimeEnv({ ...spec.env, AGENT_BROWSER_SESSION: session })).catch(() => false);
     await runtime.closeAll();
-    await probe.close();
     await gate.close();
-    rmSync(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    rmSync(scratch, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
     rmSync(sockets, { recursive: true, force: true });
+  }
+}
+
+export async function verifyBrowserIdentity(options: BotBrowserOptions & { publicPages?: boolean }): Promise<{ readout: IdentityReadout; public: PublicVerdict[] }> {
+  const log = options.log ?? (() => {});
+  const probe = await startIdentityProbe();
+  try {
+    return await withBotBrowser(options, async (call, decided, launcher) => {
+      await call("agent_browser_open", { url: probe.url });
+      const reports = await probe.complete(30_000);
+      const major = String(reports.page?.high?.uaFullVersion ?? "").split(".")[0] ?? "";
+      const expected = expectedUserAgent(major);
+      const gated = { check: "the page loaded through the egress gate", pass: decided.has(Number(new URL(probe.url).port)), detail: `the gate decided on ports ${[...decided].join(", ") || "none"}` };
+      const readout: IdentityReadout = { chrome: launcher.describe(), expectedUserAgent: expected, reports, checks: [...identityChecks(reports, expected), gated] };
+      writeFileSync(join(options.out, "identity.json"), `${JSON.stringify(readout, null, 2)}\n`);
+      const verdicts: PublicVerdict[] = [];
+      for (const site of options.publicPages ? PUBLIC_PAGES : []) {
+        const started = Date.now();
+        try {
+          await call("agent_browser_open", { url: site.url });
+          await new Promise((done) => setTimeout(done, site.waitMs));
+          const value = evalValue(await call("agent_browser_eval", { script: `JSON.stringify(${site.extract})` }));
+          const screenshot = savedImage(await call("agent_browser_screenshot", {}).catch(() => null), join(options.out, site.name));
+          verdicts.push({ name: site.name, ...site.verdict(value as never), ...(screenshot ? { screenshot } : {}) });
+        } catch (error) {
+          verdicts.push({ name: site.name, pass: false, detail: `could not read the page: ${error instanceof Error ? error.message : String(error)}` });
+        }
+        log(`${site.name}: ${verdicts.at(-1)!.pass ? "pass" : "FAIL"} (${verdicts.at(-1)!.detail}) in ${Date.now() - started} ms`);
+      }
+      if (verdicts.length) writeFileSync(join(options.out, "public.json"), `${JSON.stringify(verdicts, null, 2)}\n`);
+      return { readout, public: verdicts };
+    });
+  } finally {
+    await probe.close();
   }
 }
 

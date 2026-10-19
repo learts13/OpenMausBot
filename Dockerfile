@@ -102,6 +102,12 @@ ENV AGENT_BROWSER_EXECUTABLE_PATH=/opt/openmausbot-browser/chrome \
 WORKDIR /app
 
 FROM runtime AS cloud-home
+# Tools bots reach for in their shell on a My Cloud: Python, pdftotext and
+# unzip (about 28 MB unpacked). Their own layer, so the Chrome layers beneath
+# stay cached.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends python3 poppler-utils unzip \
+  && rm -rf /var/lib/apt/lists/*
 # Caddy and Grok are pinned, so they sit beneath the engines, which change
 # more often.
 COPY --from=edge /caddy /usr/local/bin/caddy

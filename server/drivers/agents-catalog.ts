@@ -671,20 +671,22 @@ const TOOL_DEFINITIONS = [
   {
     name: "create_trigger",
     description:
-      "Set up work that happens on its own: when <something happens>, a bot does <instructions>. Call it in this turn whenever the person describes recurring or event-based work (\"every morning send me…\", \"whenever I get an email from…\", \"when another app calls…\"); never ask for confirmation first. It applies at once and the person sees a card with Edit, Pause and Undo. when=schedule runs on a time rule (call list_triggers first for relative dates: it has the authoritative time and timezone); when=app_event runs when something happens in a connected app (list_trigger_events first; prefer it to a schedule that keeps checking); when=webhook gives an address another app sends to (the person copies it from the card; you never see its secret). To the person these are automations: write name and instructions as they would say them. Something to do once, now, is not a trigger. for_bot_id: a trigger for ANOTHER bot in your section, which keeps that bot's engine and permissions.",
+      "Set up work that happens on its own: when <something happens>, a bot does <instructions>. Call it in this turn whenever the person describes recurring or event-based work (\"every morning send me…\", \"whenever I get an email from…\", \"when another app calls…\"); never ask for confirmation first. It applies at once and the person sees a card with Edit, Pause and Undo. when=schedule runs on a time rule (call list_triggers first for relative dates: it has the authoritative time and timezone); when=app_event runs when something happens in a connected app (list_trigger_events first; prefer it to a schedule that keeps checking); when=webhook gives an address another app sends to (the person copies it from the card; you never see its secret). when=limit_reset runs when an AI's usage limit resets (\"run this when my limit resets\", or to finish work your own limit stopped). To the person these are automations: write name and instructions as they would say them. Something to do once, now, is not a trigger. for_bot_id: a trigger for ANOTHER bot in your section, which keeps that bot's engine and permissions.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
       properties: {
         when: {
           type: "string",
-          enum: ["schedule", "app_event", "webhook"],
-          description: "schedule = on a time rule (give schedule); app_event = something happens in a connected app (give app and event); webhook = when another app calls a link.",
+          enum: ["schedule", "app_event", "webhook", "limit_reset"],
+          description: "schedule = on a time rule (give schedule); app_event = something happens in a connected app (give app and event); webhook = when another app calls a link; limit_reset = when an AI engine's usage limit resets.",
         },
         ...TRIGGER_FIELDS_SCHEMA,
         app: { type: "string", description: "app_event: app slug from list_trigger_events." },
         event: { type: "string", description: "app_event: event slug from list_trigger_events." },
         account: { type: "string", description: "app_event: account id or alias, only when the app has several." },
+        engine: { type: "string", description: "limit_reset: the engine id whose limit to wait for, e.g. claude or codex. Omit for your own engine." },
+        repeat: { type: "string", enum: ["once", "every_reset"], description: "limit_reset: once (default) or every_reset." },
         for_bot_id: {
           type: "string",
           description:

@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { OPENCODE_PROVIDER_ENV, PROVIDER_CREDENTIAL_ENV, WORKSPACE_CREDENTIAL_ENV, stripWorkspaceCredentialEnv } from "./config.ts";
 import { discoverOpenCodeModels, ensureOpenCodeInjectModel, resetOpenCodeModelCache } from "./drivers/acp/opencode-go.ts";
 import { readClaudeAuthSettings, readClaudeModelCatalog } from "./drivers/claude.ts";
+import { OPENROUTER_FAILURES, freeLabel } from "./drivers/openrouter-free.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -183,4 +184,16 @@ describe("Keys exported on a server", () => {
     expect(cline).toContain("An unconfigured account remains unavailable.");
   });
 
+});
+
+describe("Free OpenRouter models section", () => {
+  it("quotes the turn errors and the picker mark the chat engine shows", () => {
+    const text = section("### Free OpenRouter models");
+    expect(OPENROUTER_FAILURES.credits).toMatch(/^This model needs OpenRouter credit\b/u);
+    expect(text).toContain('"This model needs OpenRouter credit"');
+    expect(OPENROUTER_FAILURES.privacy).toMatch(/^OpenRouter's privacy settings block this free model\b/u);
+    expect(text).toContain(`"OpenRouter's privacy settings block this free model"`);
+    expect(freeLabel("Gemma 4 31B", { id: "google/gemma-4-31b-it:free" })).toBe("Gemma 4 31B (free)");
+    expect(text).toContain("**(free)**");
+  });
 });

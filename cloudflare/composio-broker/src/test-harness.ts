@@ -216,6 +216,7 @@ export function brokerHarness(options: { migrations?: number } = {}) {
     COMPOSIO_WEBHOOK_SECRET: WEBHOOK_SECRET as string | undefined,
     CLOUD_GRANT_SECRET: CLOUD_GRANT_SECRET as string | undefined,
     STATS_TOKEN: STATS_TOKEN as string | undefined,
+    CLOUD_ADMIN_URL: undefined as string | undefined,
     REGISTRATION_LIMITER: { limit: async () => ({ success: true }) },
     SESSION_LIMITER: { limit: async () => ({ success: true }) },
     EVENTS_LIMITER: { limit: async () => ({ success: limits.events }) },

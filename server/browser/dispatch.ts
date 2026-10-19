@@ -23,6 +23,8 @@ export const DEFAULT_ACTION_MS = 15_000;
 /** Kept back from a call's budget for the reads after its action. */
 const FOLLOW_UP_MS = 5_000;
 const OBSERVE_TEXT_CHARS = 200_000;
+/** The longest an action's answer waits for a navigation the page asked for to show its next page. */
+const NAVIGATION_FOLLOW_MS = 10_000;
 const OBSERVE_PAGE = `({ url: location.href, title: document.title, text: (document.body ? document.body.innerText : "").slice(0, ${OBSERVE_TEXT_CHARS}) })`;
 const ELEMENT_TEXT = "function () { return String(this.innerText ?? this.textContent ?? this.value ?? ''); }";
 
@@ -167,9 +169,11 @@ async function act(context: ToolContext, tab: Tab | null, run: () => Promise<Too
   return context.control.agent(tab, async () => {
     const known = new Set(context.tabs.list().map((candidate) => candidate.id));
     const before = observeChange && tab ? await observe(tab) : null;
+    const mark = before && tab ? tab.page.navigations.mark() : null;
     const result = await run();
     if (!tab || result.isError) return result;
     // An open dialog blocks the page's scripts, so the page is read again only once it is answered.
+    if (mark && !tab.page.dialogs.pending) await tab.page.navigations.follow(mark, Math.min(NAVIGATION_FOLLOW_MS, remaining(context)));
     const after = before && !tab.page.dialogs.pending ? await observe(tab) : null;
     const opened = observeChange ? await openedNote(context, tab, known) : null;
     return withParts(result, before && after ? describePageChange(before, after) : null, opened, dialogNote(tab), context.health(tab));

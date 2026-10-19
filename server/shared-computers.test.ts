@@ -94,6 +94,16 @@ describe("a dropped channel recovers by itself", () => {
     await expect(result).resolves.toEqual({ ok: true });
     broker.close();
   });
+  it("a server that stops answers its held poll and every later call as restarting, never as a lost sign-in", async () => {
+    const { broker, computer } = screen();
+    const held = broker.poll(computer.id, alice.session, secret);
+    broker.close();
+    await expect(held).rejects.toMatchObject({ status: 503, message: expect.stringMatching(/restarting/) });
+    await expect(broker.poll(computer.id, alice.session, secret)).rejects.toMatchObject({ status: 503 });
+    expect(() => broker.liveJob(computer.id, alice.session, secret, randomUUID())).toThrow(expect.objectContaining({ status: 503 }));
+    expect(() => broker.register(computer, alice, secret)).toThrow(expect.objectContaining({ status: 503 }));
+    expect(broker.list(alice.person)).toEqual([]);
+  });
   it("a poll whose client went away answers nothing, so its job waits for the next poll", async () => {
     const { broker, computer } = screen();
     const gone = new AbortController();

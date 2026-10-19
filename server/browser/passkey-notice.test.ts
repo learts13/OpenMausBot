@@ -10,10 +10,14 @@ const texts = (result: unknown) => (result as { content: Array<{ text: string }>
 describe("the passkey notice a bot gets", () => {
   it("orders what works: connected apps, another way with a code, then the lent PC on My Cloud only", () => {
     const cloud = passkeyNotice("google", "cloud");
-    expect(cloud.indexOf("connected apps")).toBeLessThan(cloud.indexOf("Try another way"));
+    const works = cloud.slice(cloud.indexOf("What works, best first"));
+    expect(works.indexOf("connected apps")).toBeLessThan(works.indexOf("Try another way"));
     expect(cloud).toContain("COMPOSIO_MANAGE_CONNECTIONS");
     expect(cloud).toContain("request_sign_in");
-    expect(cloud).toContain("do not retry, wait or press Continue");
+    expect(cloud).toContain("do not retry, wait, or press Continue or Try again");
+    expect(cloud).toContain("this Google account wants a passkey");
+    expect(cloud.indexOf("Choose \"Try another way\" on this page")).toBeLessThan(cloud.indexOf("connected apps"));
+    expect(cloud).toContain("take a snapshot to see them), or use the person's own computer's browser");
     expect(cloud).toContain("list_shared_computers");
     expect(passkeyNotice("google", "desktop")).not.toContain("list_shared_computers");
     expect(passkeyNotice("google", "server")).not.toContain("My Cloud");

@@ -125,6 +125,10 @@ const __APP_VERSION__: string;
       cloudLending?: { open(): Promise<void> };
       /** This computer's Settings → Logins only: what of Logins My Cloud has, and Also use on My Cloud. */
       cloudLogins?: import("../../electron/cloud-logins.mjs").CloudLoginsBridge;
+      /** This computer's Settings → MausBot Cloud: what each side has, Send everything, and the switches. */
+      cloudSend?: import("../../electron/cloud-send.mjs").CloudSendBridge;
+      /** My Cloud's own page in this app: what this computer has that My Cloud lacks, and Bring them over. */
+      cloudSendPage?: import("../../electron/cloud-send.mjs").CloudSendPageBridge;
       /** Settings on the person's own Cloud: the plan, read only. */
       cloudPlan?: import("../../electron/cloud-account.mjs").CloudPlanBridge;
       desktopNotices?: import("../../electron/desktop-prefs.mjs").DesktopNoticesBridge;

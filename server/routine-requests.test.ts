@@ -477,7 +477,7 @@ describe("RoutineRequestService", () => {
                   everyMinutes: routine.schedule.everyMinutes,
                   type: "interval",
                 }
-              : routine.schedule.type === "cron"
+              : routine.schedule.type === "cron" || routine.schedule.type === "limit_reset"
                 ? { ...routine.schedule }
                 : { weekdays: [...routine.schedule.weekdays], time: routine.schedule.time, type: "daily" },
           instructions: routine.instructions,

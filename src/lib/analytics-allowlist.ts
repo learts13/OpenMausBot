@@ -66,7 +66,7 @@ export function engineSlug(
 
 export const APP: readonly string[] = CURATED_CONNECTOR_SLUGS;
 export const BOT_TEMPLATE: readonly string[] = BOT_ROLES.map((role) => role.id);
-export const CLOUD_TIER = ["personal", "pro", "max"] as const;
+export const CLOUD_TIER = ["starter", "personal", "pro", "max"] as const;
 
 export const KEY_VIA = ["settings", "computer_panel", "chat_request"] as const;
 export type KeyVia = (typeof KEY_VIA)[number];
@@ -87,6 +87,6 @@ export const DECIDER = ["jev", "openrouter", "off"] as const;
 export const CONNECTORS_MODE = ["managed", "self_hosted", "unavailable"] as const;
 export const LOCAL_VM_MODE = ["shared", "per_bot", "pool"] as const;
 export const TRIAL_CREDIT = ["active", "used_up", "ended", "none"] as const;
-export const CLOUD_PLAN = ["personal", "pro", "max", "other", "none", "unknown"] as const;
+export const CLOUD_PLAN = ["starter", "personal", "pro", "max", "other", "none", "unknown"] as const;
 export const EDITION = ["oss", "enterprise"] as const;
 export const PLATFORM = ["desktop", "browser"] as const;

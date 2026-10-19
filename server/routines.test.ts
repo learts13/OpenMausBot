@@ -3283,6 +3283,30 @@ describe("run on startup", () => {
     expect(booted.listRuns()).toHaveLength(0);
   });
 
+  it("does not run when a Cloud home starts again after a sleep it was stopped for", async () => {
+    const h = harness(start);
+    h.manager.create(daily({ runOnStartup: true }));
+    const booted = new RoutineManager({ ...h.options, skipStartupRuns: true });
+    booted.start();
+    await booted.tick();
+    booted.stop();
+    expect(h.started).toHaveLength(0);
+    expect(booted.listRuns()).toHaveLength(0);
+  });
+
+  it("tells a Cloud home's sleep check what runs and when the next one is due", async () => {
+    const h = harness(start);
+    expect(h.manager.hasActiveRuns()).toBe(false);
+    expect(h.manager.nextDueAt()).toBeNull();
+    const first = h.manager.create(daily());
+    const later = h.manager.create(daily({ name: "Evening check", schedule: { type: "daily", time: "23:30", weekdays: [0, 1, 2, 3, 4, 5, 6] } }));
+    h.manager.create(daily({ name: "Paused", schedule: { type: "daily", time: "09:00", weekdays: [0, 1, 2, 3, 4, 5, 6] }, enabled: false }));
+    expect(h.manager.nextDueAt()).toBe(Math.min(first.nextRunAt!, later.nextRunAt!));
+    h.manager.runNow(first.id);
+    await expect.poll(() => h.manager.listRuns()[0]?.status).toBe("running");
+    expect(h.manager.hasActiveRuns()).toBe(true);
+  });
+
   it("runs once per start, not again when a paused scheduler resumes", async () => {
     const h = harness(start);
     h.manager.create(daily({ runOnStartup: true }));

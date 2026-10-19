@@ -3,21 +3,7 @@ import { useAdvancedMode } from "@/lib/interface-mode";
 import { ThreadLinkContext } from "@/components/ThreadLinkMenu";
 import { useShowThreads } from "@/lib/thread-preferences";
 import { useCopyFeedback } from "@/lib/copy-text";
-import {
-  AlertTriangle,
-  Check,
-  ChevronLeft,
-  ChevronRight,
-  Copy,
-  Crown,
-  Monitor,
-  Pin,
-  RefreshCw,
-  Square,
-  Reply,
-  Webhook,
-  X,
-} from "lucide-react";
+import { AlertTriangle, Check, ChevronLeft, ChevronRight, Copy, Crown, Monitor, Pin, RefreshCw, Square, Reply, Webhook, X } from "lucide-react";
 import { WorkingDots } from "@/components/WorkingIndicator";
 import { ACTION_ICON, MESSAGE_ROW, MessageActions, messageActionClass } from "@/components/MessageActions";
 import { useBotMessageMenu, userMessageMenu } from "@/components/message-menu";
@@ -86,6 +72,7 @@ import { WidgetMessage } from "./widget/WidgetMessage";
 import { Composer } from "./Composer";
 import { ChatErrorBanner, ChatNotice } from "./ChatErrorBanner";
 import { ThreadContextWarning } from "./ContextWarning";
+import { EngineLimitNotice, useLimitResetContinue } from "./LimitResetContinue";
 import { ChatFindBar } from "./ChatFindBar";
 import { ReplyQuote } from "./ReplyQuote";
 import { ConnectorCard } from "./ConnectorCard";
@@ -237,7 +224,7 @@ export function ErrorRow({
     ? macCuaPermissionMessage(currentPermissions)
     : null;
   const headline = macCuaReason ?? plainHeadline ?? message;
-  const usageUrl = message.includes("subscription_sharing_usage_limit_exceeded") ? CHATGPT_USAGE_URL : codexUsageLimitReached(message) ? CODEX_USAGE_URL : null;
+  const usageUrl = action ? null : message.includes("subscription_sharing_usage_limit_exceeded") ? CHATGPT_USAGE_URL : codexUsageLimitReached(message) ? CODEX_USAGE_URL : null;
   return (
     <div className="flex justify-start">
       <div className="w-fit max-w-[min(var(--chat-bubble-max),var(--chat-bubble-pct))] rounded-xl border border-danger/30 bg-danger/10 px-3.5 py-2.5 text-[13.5px] text-danger">
@@ -322,6 +309,7 @@ export function FailedTurnRow({ tool, engine, onRetry, botId, threadId }: {
   botId?: string;
   threadId?: string;
 }) {
+  const resume = useLimitResetContinue(botId, threadId, tool.limitResetsAt);
   if (tool.place && botId) return <PlaceFailedRow place={tool.place} botId={botId} threadId={threadId} onRetry={onRetry} />;
   const credit = trialCreditKind(failedTurnCause(tool.name) ?? "");
   if (credit) return <TrialCreditFailedRow kind={credit} onRetry={onRetry} />;
@@ -332,6 +320,7 @@ export function FailedTurnRow({ tool, engine, onRetry, botId, threadId }: {
       message={cause}
       headline={signedOut ? t("chat.error.signedOut", { name: signedOut.displayName }) : plainErrorLine(cause)}
       onRetry={onRetry}
+      action={resume}
       setupInstance={tool.setup ? engine : undefined}
       claudeUpdateInstance={tool.claudeUpdate ? claudeUpdateTarget(engine) : undefined}
     />
@@ -1296,6 +1285,7 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
             </button>
           )}
           <ThreadContextWarning bot={bot} messages={messages} />
+          <EngineLimitNotice engine={bot.modelSelection?.instanceId} />
           {/* Simple mode moves the model, the computer and ⋯ into the bot panel; a remote client's panel has neither. */}
           {advanced && !remoteClient && <ModelPicker key={bot.threadId} bot={bot} threadId={bot.threadId} />}
           <LiveCallChip currentBotId={bot.id} onOpen={(botId, threadId) => openThread(dispatch, { botId, threadId }, state, showThreads)} />

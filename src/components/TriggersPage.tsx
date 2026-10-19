@@ -13,6 +13,7 @@ import { AppEventEditor } from "./automations/AppEventEditor";
 import { useAllAutomationActions } from "./automations/app-actions";
 import { AutomationPanel } from "./automations/AutomationPanel";
 import { AutomationsCalendar } from "./automations/AutomationsCalendar";
+import { LimitWarnings } from "./automations/LimitWarnings";
 import { NewAutomation, type SetUpKind } from "./automations/NewAutomation";
 import { FixButton, StatusMark } from "./automations/parts";
 import { RoutineEditor } from "./RoutineCalendarPage";
@@ -96,6 +97,7 @@ export function TriggersPage({ onBack, onOpenRoom }: { onBack: () => void; onOpe
         {view === "calendar" ? <AutomationsCalendar botFilter={botFilter} selectedAutomationId={openId} onOpenAutomation={setOpenId} onOpenRoom={onOpenRoom} /> : (
           <div className="min-h-0 flex-1 overflow-y-auto">
             <div className="mx-auto w-full max-w-3xl p-4 sm:p-6">
+              <LimitWarnings botFilter={showFilter ? botFilter : "all"} />
               {all.length === 0 && state.routinesLoadState !== "loading" && state.hydrated ? (
                 <section aria-label={t("automations.empty.title")} className="px-6 py-16 text-center">
                   <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-2xl bg-accent/10 text-accent"><Zap size={22} /></div>

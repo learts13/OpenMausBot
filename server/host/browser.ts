@@ -23,7 +23,7 @@ import {
   noteBrowserEngineUnavailable,
   setBrowserViewport,
 } from "../browser-engine.ts";
-import { BrowserSweep, browserIdleMs } from "../browser-lifecycle-cleanup.ts";
+import { BrowserSweep, browserIdleMs, type BrowserCleanupWireRequest } from "../browser-lifecycle-cleanup.ts";
 import { chromeLauncher } from "../browser/chrome/launcher.ts";
 import type { HostKind } from "../browser/chrome/flags.ts";
 import { browserEngineKind, type BrowserEngineKind } from "../browser/config.ts";
@@ -53,17 +53,14 @@ export interface BrowserHostDeps {
 }
 
 type Spec = { command: string; args?: readonly string[]; env: Record<string, string> };
+const BOT_SESSION = /^bot-[A-Za-z0-9_.-]+$/;
 
 export function createBrowserHost(deps: BrowserHostDeps) {
   const { cfg, turnResources, activeInternalGenerationByThread, mintInternalCapability, DESKTOP_MANAGED, CLOUD_HOME, PORT } = deps;
   const store: Pick<Store, "bots" | "bot"> = { get bots() { return deps.store().bots; }, bot: (id: string) => deps.store().bot(id) };
 
   const agentBrowserRuntime = new BrowserRuntime({
-    closeBrowser: async (session, spec) => {
-      const closed = await closeBrowserSession(spec.command, browserRuntimeEnv({ ...spec.env, AGENT_BROWSER_SESSION: session }));
-      if (closed) browserLive.closeForSession(session);
-      return closed;
-    },
+    closeBrowser: (session, spec) => closeBrowserSession(spec.command, browserRuntimeEnv({ ...spec.env, AGENT_BROWSER_SESSION: session })),
     applyViewport: (spec) => setBrowserViewport(spec.command, spec.env),
     launch: chromeLauncher,
     relayCommand: (spec, session, command, timeoutMs) => relayCommand(spec, session, command, timeoutMs).catch((error: unknown) => {
@@ -74,12 +71,13 @@ export function createBrowserHost(deps: BrowserHostDeps) {
   });
   const agentBrowserLive = new BrowserLive({ runtime: agentBrowserRuntime });
   const host: HostKind = DESKTOP_MANAGED ? "desktop" : CLOUD_HOME || existsSync("/.dockerenv") ? "container" : "server";
+  const idleMs = () => browserIdleMs(cfg, { cloudHome: Boolean(CLOUD_HOME) });
   const chromeEngine = new ChromeEngine({
     dataDir: DATA_DIR,
     host,
     egressPort: (key) => browserEgress.open(key),
     egressNotice: (key) => browserEgress.takeNotice(key),
-    idleMs: () => browserIdleMs(cfg),
+    idleMs,
     log: (line) => console.warn(line),
   });
   // A tool call that would open Reddit from MausBot Cloud is refused before it reaches the browser. My Chrome is the
@@ -91,14 +89,17 @@ export function createBrowserHost(deps: BrowserHostDeps) {
   const browserLive = new LiveRouter(agentBrowserLive, chromeEngine);
   const usedBrowserSessions = new Map<string, Spec>();
   browserEgress.configure({ host: DESKTOP_MANAGED ? "desktop" : CLOUD_HOME ? "cloud" : "server", config: () => cfg.browserEngine?.egress });
-  // The agent-browser daemon outlives its MCP transport and this server; My Chrome is the person's own.
+  /** A live bot's, profile's or temporary browser of this data dir. */
+  const belongs = (session: string) => isTemporaryBrowserSession(session) || store.bots.some((bot) => browserSessionId(bot.id, "") === session)
+    || (cfg.browserProfiles ?? []).some((profile) => !usesMyChrome(profile.id) && currentBrowserSession("", profile.id) === session);
+  // The agent-browser daemon outlives its MCP transport and this server; My Chrome is the person's own. A Cloud home's
+  // HOME is this server's alone, so a deleted bot's browser there is closed too.
   const agentBrowserSweep = new BrowserSweep({
     engine: () => { const engine = browserEngineStatus(); return engine.kind === "ready" ? engine.binaryPath : null; },
-    owns: (session) => isTemporaryBrowserSession(session) || store.bots.some((bot) => browserSessionId(bot.id, "") === session)
-      || (cfg.browserProfiles ?? []).some((profile) => !usesMyChrome(profile.id) && currentBrowserSession("", profile.id) === session),
-    live: (session) => usedBrowserSessions.has(session),
+    owns: (session) => belongs(session) || (Boolean(CLOUD_HOME) && BOT_SESSION.test(session)),
+    live: (session) => usedBrowserSessions.has(session) && belongs(session),
     held: (session) => !turnResources.free(`browser:${session}`),
-    closeIdle: (session) => browserRuntime.closeIfIdle(session, browserIdleMs(cfg), usedBrowserSessions.get(session)),
+    closeIdle: (session) => browserRuntime.closeIfIdle(session, idleMs(), usedBrowserSessions.get(session)),
   });
   const browserSweep = {
     start() {
@@ -256,6 +257,35 @@ export function createBrowserHost(deps: BrowserHostDeps) {
     if (request.partitionId) return chromeEngine.erase({ kind: "profile", id: request.partitionId, partitionId: request.partitionId });
     return Promise.resolve(true);
   }
+  /**
+   * The agent-browser whose saved sessions a deletion erases: the one OpenMausBot installed, or on a Cloud home the
+   * image's own. Another one on PATH may be a wrapper whose failing close would hold the cleanup journal forever, so
+   * it only closes the running browser.
+   */
+  function cleanupEngine(): { binaryPath: string } | null {
+    const managed = browserEngineStatus({ managedOnly: true });
+    if (managed.kind === "ready") return managed;
+    const used = browserEngineStatus();
+    return CLOUD_HOME && used.kind === "ready" ? used : null;
+  }
+  /** A deleted bot's or profile's browser on both engines: stopped and its saved sign-ins erased; true once that is done. */
+  async function eraseDeletedBrowser(request: BrowserCleanupWireRequest): Promise<boolean> {
+    const session = request.type === "openmausbot:browser-bot-deleted" && request.botId ? browserSessionId(request.botId, "")
+      : request.partitionId ? browserSessionId("", request.partitionId) : null;
+    const engine = cleanupEngine();
+    const erased = async (name: string) => {
+      if (!engine) {
+        const used = browserEngineStatus();
+        if (used.kind === "ready") void closeBrowserSession(used.binaryPath, browserRuntimeEnv({ AGENT_BROWSER_SESSION: name }));
+        return true;
+      }
+      const ok = await clearBrowserSessionState(engine.binaryPath, name, { encryptionKey: browserEngineEncryptionKey() });
+      if (!ok) console.warn(`browser cleanup: could not clear saved state for session ${name}; restart OpenMausBot to retry this profile's cleanup. Do not use state clear --all: it erases other profiles too.`);
+      return ok;
+    };
+    const results = await Promise.all([eraseChromeBrowser(request), ...session ? [erased(session)] : []]);
+    return results.every(Boolean);
+  }
   /** What Settings shows of the engine that runs bots' browsers here; My Chrome stays on agent-browser. */
   function engineSummary<T extends { myChrome: boolean }>(agentBrowser: T): (T | (ReturnType<ChromeEngine["summary"]> & { myChrome: boolean })) & { engine: BrowserEngineKind } {
     if (browserEngineKind(cfg) !== "chrome") return { ...agentBrowser, engine: "agent-browser" };
@@ -263,9 +293,9 @@ export function createBrowserHost(deps: BrowserHostDeps) {
   }
 
   return {
-    browserRuntime, browserLive, usedBrowserSessions, browserSweep, temporaryBrowserSessions,
+    browserRuntime, browserLive, usedBrowserSessions, browserSweep, temporaryBrowserSessions, browserIdleMs: idleMs,
     currentBrowserSession, forgetTemporaryBrowser, myChromeAvailable, usesMyChrome, browserSessionSpec, browserIntegration,
     browserReady, currentBrowserSpec, loginInput, browserSystemPrompt, signedInSitesRefusal, closeBrowser, browserEngineSwitched,
-    eraseChromeBrowser, engineSummary,
+    eraseDeletedBrowser, engineSummary,
   };
 }

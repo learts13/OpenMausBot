@@ -336,6 +336,7 @@ export class BrowserRuntime {
   private clients = new Map<string, ClientEntry>();
   private recoveries = new Map<string, Promise<string | null>>();
   private toolLists = new Map<string, unknown>();
+  private idleCloseListeners = new Set<(session: string) => void>();
   private options: { requestTimeoutMs: number; takeoverTimeoutMs: number; idleMs: number; maxPending: number; resultBudget: number; recoveryCheckMs: number; laneWaitMs: number; callBudgetMs: number; followUpReserveMs: number };
   private closeBrowser: CloseBrowser;
   private applyViewport?: ApplyViewport;
@@ -813,21 +814,24 @@ export class BrowserRuntime {
     finally { gate.humans--; gate.lastUsed = Date.now(); this.changed(gate); }
   }
 
-  /** Keeps the browser open while watched; call the returned function when the view closes. */
+  /** A person opened a view, which counts as use; call the returned function when it closes. */
   watch(session: string, spec: { command: string; args?: readonly string[]; env?: Record<string, string | undefined> }): () => void {
     const gate = this.gate(session);
     gate.watchers++;
+    gate.lastUsed = Date.now();
     gate.spec = { command: spec.command, args: [...spec.args ?? []], env: { ...spec.env } };
     let watching = true;
     return () => {
       if (!watching) return;
       watching = false;
       gate.watchers--;
-      gate.lastUsed = Date.now();
     };
   }
 
   async settled(session: string): Promise<void> { await this.gates.get(session)?.idleClose; }
+
+  /** Told just before an idle close stops a session's browser. */
+  onIdleClose(listener: (session: string) => void): void { this.idleCloseListeners.add(listener); }
 
   launchReady(spec: LaunchSpec): Promise<void> { return this.launch?.ready(spec) ?? Promise.resolve(); }
 
@@ -840,13 +844,14 @@ export class BrowserRuntime {
     if (gate && !gate.spec && spec) gate.spec = { command: spec.command, args: [...spec.args ?? []], env: { ...spec.env } };
     const launch = gate?.spec;
     if (!gate || !launch || attachesToChrome(launch.env) || !(idleMs > 0) || Date.now() - gate.lastUsed < idleMs) return false;
-    if (gate.calls || gate.agents || gate.humans || gate.owner !== null || gate.closing || gate.releasing || gate.watchers || this.lanes.held(session)) return false;
+    if (gate.calls || gate.agents || gate.humans || gate.owner !== null || gate.closing || gate.releasing || this.lanes.held(session)) return false;
     gate.closing = true;
     gate.ready = false;
     let finished!: () => void;
     gate.idleClose = new Promise((resolve) => { finished = resolve; });
     this.changed(gate);
     try {
+      for (const listener of this.idleCloseListeners) listener(session);
       if (!await this.closeBrowser(session, launch)) return false;
       this.steps?.forget(session);
       this.launch?.stopped(session);

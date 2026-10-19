@@ -18,8 +18,10 @@ export function startedBadge({ tier, trial, credit }: CloudStarted, received: bo
   return credit ? t("cloudBuy.setup.badgeCredit", { plan, credit: usd(credit.grantedUsd) }) : t("cloudBuy.setup.badgeTrial", { plan });
 }
 
-export function SetupScreen({ started, received, step, slow, ready, name, typed, color, counting, busy, openFailed, onName, onColor, onOpen, onNotNow }: {
+export function SetupScreen({ started, received, step, slow, ready, sleeps = false, name, typed, color, counting, busy, openFailed, onName, onColor, onOpen, onNotNow }: {
   started: CloudStarted; received: boolean; step: CloudSetupStep | null; slow: boolean; ready: boolean;
+  /** Its plan sleeps when idle, so the switcher will say so rather than always on. */
+  sleeps?: boolean;
   /** The name shown (the default while the field is empty); `typed` is the field. */
   name: string; typed: string; color: CloudColor; counting: number | null; busy: boolean; openFailed: boolean;
   onName: (name: string) => void; onColor: (color: CloudColor) => void; onOpen: () => void; onNotNow: () => void;
@@ -68,7 +70,7 @@ export function SetupScreen({ started, received, step, slow, ready, name, typed,
           <span data-cloud-preview className="inline-flex max-w-full items-center gap-2 self-start rounded-[10px] border border-hairline/70 bg-app py-1.5 pe-2.5 ps-1.5">
             <CloudTile color={color} />
             <span className="min-w-0"><span className="block truncate text-[13px] font-semibold leading-tight text-ink">{name}</span>
-              <span className="block truncate text-[11.5px] text-ink-tertiary">{t("cloudBuy.setup.previewLine", { plan })}</span></span>
+              <span className="block truncate text-[11.5px] text-ink-tertiary">{t(sleeps ? "cloudBuy.setup.previewLineSleeps" : "cloudBuy.setup.previewLine", { plan })}</span></span>
           </span>
         </div>
       </div>

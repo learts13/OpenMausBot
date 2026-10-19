@@ -370,6 +370,20 @@ export class RuntimeCoordinator implements Coordinator {
     return out;
   }
 
+  awaitingTeammateThreads(): Set<string> {
+    this.ready();
+    const threads = new Set<string>();
+    for (const n of this.live()) {
+      const parent = n.parentId && n.reply !== "none" ? this.store.get(n.parentId) : undefined;
+      if (parent && !isTerminal(parent) && parent.assignee.destination.groupId === undefined) threads.add(parent.assignee.destination.threadId);
+      const root = view(n);
+      if (!root.parentId && !root.groupId && (root.status === "resume" || (root.status === "waiting" && root.question === undefined && !root.cards?.length))) {
+        threads.add(root.threadId);
+      }
+    }
+    return threads;
+  }
+
   liveEdges(): LiveHandoffEdge[] {
     this.ready();
     return this.runtime.liveEdges().map(edge => ({

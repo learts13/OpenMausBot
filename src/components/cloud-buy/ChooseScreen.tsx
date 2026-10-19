@@ -71,6 +71,7 @@ export function ChooseScreen({ offer, chosen, now, busy, signedOut, notice, onCh
             </span>
             <span className="row-span-2 text-end text-[16px] font-bold tabular-nums text-ink">{row.price}<small className="block text-[11.5px] font-medium text-ink-tertiary">{t("cloudBuy.perMonth")}</small></span>
             {row.line && <span className="col-start-2 -mt-0.5 text-[12.5px] text-ink-secondary">{row.line}</span>}
+            {row.sleeps && <span data-plan-sleeps className="col-span-2 col-start-2 text-[12px] text-ink-secondary">{row.sleeps}</span>}
             {row.chips.length > 0 && <span className="col-span-2 col-start-2 mt-1 flex flex-wrap gap-1.5">
               {row.chips.map(chip => <span key={chip} className="whitespace-nowrap rounded-full border border-hairline/70 bg-card px-[7px] py-0.5 text-[11px] text-ink-secondary">{chip}</span>)}
             </span>}

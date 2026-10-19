@@ -6,6 +6,7 @@ import { webSocketTransport } from "./cdp/transport.ts";
 import { fitPage, pageLimit, type BrowserMode, type HostKind, type ScreenSpec } from "./chrome/flags.ts";
 import { launchChrome, type ChromeProcess } from "./chrome/launch.ts";
 import { clearSingleton, staleSingletonLock, type ProcessRegistry } from "./chrome/processes.ts";
+import { languageList } from "./chrome/wrapper.ts";
 import { downgradeRefusal, ensureProfile, forgetOpenTabs, markCleanExit, profileHash, recordOpenedBy, versionOf, workspaceId } from "./chrome/profile.ts";
 
 export type BackendKind = "local" | "my-chrome" | "cdp-url";
@@ -127,7 +128,7 @@ export class LocalBackend implements Backend {
       recordOpenedBy(dir, version);
       const browserOptions: BrowserOptions = {
         identity: headless ? binary.identity : null,
-        acceptLanguage: locale ? acceptLanguageFor(locale) : undefined,
+        acceptLanguage: locale ? languageList(locale) : undefined,
         headless,
         downloadDir: request.downloadDir,
         platform,
@@ -153,13 +154,6 @@ export class LocalBackend implements Backend {
       throw error;
     }
   }
-}
-
-/** The Accept-Language a person with this UI language sends: theirs first, English after. */
-export function acceptLanguageFor(locale: string): string {
-  const base = locale.split("-")[0]!;
-  const languages = [locale, ...(base !== locale ? [base] : []), ...(base === "en" ? [] : ["en-US", "en"])];
-  return languages.map((language, index) => (index === 0 ? language : `${language};q=${(1 - index / 10).toFixed(1)}`)).join(",");
 }
 
 const CONNECTED_CAPS: BackendCaps = { persistentProfile: true, window: false, egressGate: false, identityOverride: false, ownsAllTabs: false, downloads: "none", uploads: "inject", botPasskeys: false };

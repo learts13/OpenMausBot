@@ -1,6 +1,7 @@
 // Harness-native approval cards for peer comms (approvePeerComms), resolved before an answer reaches the provider adapter.
 
 import { newId } from "./contracts.ts";
+import { optionCardsForTools } from "./message-db.ts";
 import { buildNotification, type Notification } from "./notify.ts";
 import { peerAllowKey, type PeerAction } from "./peer-approval-key.ts";
 import type { BotRecord, Message, Store } from "./store.ts";
@@ -213,17 +214,16 @@ function peerCardThreads(bus: ApprovalBus): Set<string> {
 
 export function dismissStalePeerCards(bus: ApprovalBus): number {
   let dismissed = 0;
-  for (const threadId of peerCardThreads(bus)) {
-    for (const message of bus.store.messagesFor(threadId)) {
-      const card = message.card;
-      if (!card?.requestId || card.answered || card.dismissed) continue;
-      if (card.tool !== "ask_bot" && card.tool !== "delegate_bot" && card.tool !== "post_to_room") continue;
-      if (pendingComms.has(card.requestId)) continue;
-      const patched = bus.store.patchMessage(threadId, message.id, {
-        card: { ...card, answered: "deny", dismissed: true },
-      });
-      if (patched) dismissed += 1;
-    }
+  const threads = peerCardThreads(bus);
+  for (const { threadId, messageId } of optionCardsForTools(Object.keys(ACTION_VERB))) {
+    if (!threads.has(threadId)) continue;
+    const card = bus.store.messagesFor(threadId).find((message) => message.id === messageId)?.card;
+    if (!card?.requestId || card.answered || card.dismissed) continue;
+    if (pendingComms.has(card.requestId)) continue;
+    const patched = bus.store.patchMessage(threadId, messageId, {
+      card: { ...card, answered: "deny", dismissed: true },
+    });
+    if (patched) dismissed += 1;
   }
   return dismissed;
 }

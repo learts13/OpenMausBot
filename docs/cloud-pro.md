@@ -1,7 +1,8 @@
 # OMB Cloud: the home machine
 
 OMB Cloud (the Personal, Pro and Max plans) gives one person an always-on
-OpenMausBot server of their own. The plans differ in machine size, disk and
+OpenMausBot server of their own (a plan may instead sleep when idle: see
+[Sleeping homes](#sleeping-homes-the-power-read-and-the-sleep-handshake)). The plans differ in machine size, disk and
 included allowances; everything on this page applies to all of them. Each
 customer gets one Fly app with one `home` machine that is always on, a volume
 at `/data`, and TLS at `https://<app>.fly.dev`. The desktop app, the phone and
@@ -450,10 +451,11 @@ account, companion client mode and restarting the app before a check succeeds
 stays refused. In a web browser, the browser asks for the microphone for
 the Cloud's address.
 
-- **The key is the person's own.** No Cloud plan includes Live calls: the
-  person pastes an OpenAI API key from a project with GPT-Live access. It is
-  saved on the Cloud (`PUT /api/config`, as a server page has no credential
-  store), and the Live copy says so.
+- **The key is the person's own.** No Cloud plan includes the key, and no plan
+  is needed for Live calls: they use the OpenAI key in Settings → API keys, or
+  a separate Live key, from a project with GPT-Live access. It is saved on the
+  Cloud (`PUT /api/config`, as a server page has no credential store), and the
+  Live copy says so.
 - **The voice knows where it runs.** In the bot's own words
   (`CLOUD_HOME_PLACE` in `server/system-prompt.ts`), it is told it runs on
   the person's My Cloud, not on their own computer, and that the bot changes
@@ -927,6 +929,67 @@ is on the volume. Only the `/data` volume is `maus`'s.
 `HOME=/data`, so `~/.claude`, `~/.codex`, `~/.grok` and OpenMausBot's own
 data (`/data/.openmausbot`) persist on the volume.
 
+### Memory
+
+A home is one machine, without swap on Pro and Max, and every engine process
+(OpenCode, Claude Code, Codex and the other agent CLIs) starts its own copy of
+each MCP server: one OpenCode thread measured 361 MB on its own and 623 MB
+with six MCP servers before its first prompt. Several at once can fill the
+machine, and then the kernel thrashes for a long time before its OOM killer
+acts: the health check stops answering and the stalled turns read like a
+provider outage. So on a Cloud home (`server/engine-memory.ts`):
+
+- **A turn that needs a new engine process waits for memory.** It starts
+  once the machine's available memory (plus half of any free swap), less a
+  tenth kept for the server, Chrome and the page cache, and less what engines
+  admitted in the last 90 s have yet to take, fits one more engine (the
+  average the engines here measure, 700 MB until one is measured). The chat
+  says "Waiting for memory: N tasks are running on this Cloud …", again every
+  ten minutes (which keeps both stall checks quiet), and the turn starts by
+  itself. Stop ends the wait. A thread whose engine is still running never
+  waits, and the only task is never held back.
+- **OpenCode threads share a process.** Threads whose OpenCode would start
+  the same way (same login, approval level and settings) run as sessions of one
+  `opencode acp` process, up to six at a time and twelve over its life
+  (`server/drivers/acp/host.ts`). Five sessions measured 811 MB in one process
+  against 2,381 MB in five. A session joining a running process waits only for
+  a session's worth of memory (200 MB). OpenCode 1.19.3 keeps a closed
+  session's memory and MCP servers until its process exits, so a process
+  holding closed sessions ends once none of its sessions has run a turn for a
+  minute, and each thread's next turn loads its session in a new process.
+- **An engine nobody is using gives way first.** Engines stay up between
+  turns; one that is idle is stopped to make room before anything waits.
+- **Idle engines stay up only for the conversation in front of a person**
+  (`engineIdleMs` in `server/drivers/session-idle.ts`). A thread a person
+  wrote in from any channel, or opened or read in the app, in the last 30
+  minutes keeps its engine the configured 10 minutes after a turn, scaled by
+  the memory left: all of it with half the machine free above the tenth, down
+  to a tenth of it as memory runs out. Any other thread (a teammate's
+  delegated work, a routine) keeps its engine 30 seconds.
+- **About to run out, the home stops its newest engine** rather than freeze:
+  every 2 s while engines run, when free memory falls under 4% (160 MB at
+  least), or the memory stall reaches 40% below the tenth, it stops an idle
+  engine, else the newest of two or more busy ones, at most every 15 s, and
+  not in the tick right after the kernel's own OOM killer acted.
+- **The kernel's order** (`server/oom-score.ts`): engines, and everything they
+  start, are born with `oom_score_adj` 1000; Chrome scores its tabs 200 and
+  up; the server is -800 and Caddy -900, so the health check is the last to
+  go.
+- **OpenCode reaches OpenMausBot's own tools over HTTP.** The agents,
+  browser, computer, Data and HighLevel servers are endpoints of this server
+  (`/api/internal/mcp-http/<name>`, `server/routes/own-mcp-http.ts`) with the
+  turn's capability in the Authorization header, instead of a Node proxy
+  process each (about 20–30 MB PSS apiece) in every OpenCode session. A server
+  behind a tool selection keeps its stdio gate; the person's own servers are
+  unchanged.
+- **The reason is said.** A turn whose engine was stopped for memory, by the
+  home or by the kernel (a SIGKILL while `/proc/vmstat`'s `oom_kill` rose),
+  fails with "This Cloud ran out of memory while N tasks ran at once, so this
+  one was stopped. It was not a problem with the AI provider. New tasks now
+  wait until there is memory for them.", and a turn that stalled while memory
+  was short says so after "no activity for 20 minutes". The health report
+  counts both as `out_of_memory`.
+
 ### Why the server stays on loopback
 
 `server/request-auth.ts` treats an unproxied loopback request on a Cloud
@@ -1286,13 +1349,80 @@ a prompt, a URL, an email address, a token, or an engine's account
 (`ProviderSnapshot.account`). Only fixed codes, counts, times, versions, engine
 kinds, random ids, connector slugs, booleans and machine numbers. Connected
 apps are looked up in the background at most every 30 minutes, so a slow
-provider never holds the answer. Cloud computers are not listed: through the
+provider never holds the answer. `connectors.items` lists only apps the
+person set up: connected now, or connected once and since expired or failed.
+An app never connected, HighLevel without a saved connection included, is not
+listed. Cloud computers are not listed: through the
 Admin's Boat relay that would count as using an included service and hold back
 updates; a cloud computer that fails a turn arrives as its place's code
 (`cc-unavailable`, `cc-no-start`, `cc-provider`, …).
 
 A home from before this answers `404`; the Admin then reads `/api/health`
 and shows its health as Unknown.
+
+## Sleeping homes: the power read and the sleep handshake
+
+A plan may let its home **sleep when idle**: the Admin suspends the machine
+(Fly keeps its memory, and the first request wakes it in under a second;
+measured 0.72 s) or, when Fly can't suspend it, stops it (about 20 s to wake).
+The home never stops itself. On every plan that doesn't sleep the Admin never
+calls these routes, and nothing below changes how a home behaves.
+
+**What idle means (`server/cloud-power.ts`).** All of:
+
+- no turn running (bots, rooms, delegated work), no routine run queued to start
+  now or running (one waiting on a person doesn't count: their answer wakes
+  the home), no Live call, no cloud computer on or starting (its idle timer
+  lives in this process), no maintenance (backup or restore, Move to Cloud, an
+  engine or browser install, a provider sign-in) and no request in progress;
+- nobody used the home for 10 minutes (the Admin may ask for another window).
+  A use is an authenticated request, except the event stream, `/api/health`,
+  `/api/sync/…`, `/api/shared-computers/…` and requests the page marks
+  `x-omb-background: 1` (its own polls). A request with no mark counts, so an
+  older client can only keep a home awake, never let it sleep under someone;
+- work ended 2 minutes ago, the home has been awake 2 minutes, and the next
+  scheduled run is at least 5 minutes away.
+
+**`GET /api/cloud/power[?idleMinutes=N]`**, signed like the health read
+(`v1\n<timestamp>\n<nonce>\nGET\n<path and query>\n<hash of the empty body>`),
+its own nonces. `200`:
+
+```json
+{ "v": 1, "at": 1792355000000, "bootedAt": 1792350000000, "wokeAt": 1792354000000,
+  "idle": false, "busy": ["recent-activity"], "lastActivityAt": 1792354900000, "lastWorkAt": null,
+  "nextDueAt": 1792358600000, "sleeping": false }
+```
+
+`busy` holds fixed codes only: `turn`, `run`, `live-call`, `computer`,
+`maintenance`, `recent-activity`, `recent-work`, `just-woke`, `due-soon`.
+`nextDueAt` is the earliest enabled routine's next run or queued run's retry:
+the Admin starts a sleeping home a minute before it. `wokeAt` is the boot, or
+the last resume (noticed as a jump of the clock).
+
+**`POST /api/cloud/power/sleep`**, signed over its JSON body
+`{"v":1,"idleMinutes":10}`. `409 {"ok":false,"busy":[…]}` while not idle;
+`200 {"ok":true,"nextDueAt":…}` once the home agreed. From then on, until a
+resume, someone's use, or 120 s (a sleep the Admin never carried out):
+
+- the event stream gets `{"kind":"power","state":"sleeping"}`. The page closes
+  its stream, stops its polls, shows "My Cloud is asleep" and stays quiet until
+  the person clicks, types or focuses it, which wakes the home
+  (`src/lib/cloud-power.ts`): Fly wakes a machine for **any** inbound request,
+  so a page that kept polling would keep it awake;
+- held `GET /api/sync/changes` and `POST /api/shared-computers/<id>/poll`
+  answer `503 {"error":"asleep"}` with `x-omb-cloud-power: asleep`, and new
+  ones get the same, so the desktop's Files sync and lending pause instead of
+  waking it;
+- `cloud-sleep.json` in the data folder marks the sleep. A boot that finds it
+  (the machine was stopped, not suspended) is a wake, not a startup: "run on
+  startup" routines don't fire. Any other boot removes nothing and runs them as
+  before.
+
+**The edge on a cold wake.** `OMB_CLOUD_EDGE_HOLD` (whole seconds, at most
+120, such as `30s`; unset: `0s`, today's edge) makes Caddy hold a request while
+the server starts instead of answering 502, so a webhook or the app's first
+request after a stop is answered late rather than refused. The Admin sets it
+only for a plan that sleeps.
 
 ## What the desktop reads from the Admin
 
@@ -1550,6 +1680,24 @@ origin, with `expiresAt` at most ten minutes away. It then adds or selects the
 pairing-link flow as Connect to a server. The code stays in main-process
 memory for that one navigation: never on disk, never in a renderer. A
 malformed session summary or grant is treated as none.
+
+### A Cloud that sleeps: what the desktop does
+
+A plan may let My Cloud sleep when idle (the Admin suspends its machine; Fly starts it again for **any** request through
+its proxy). The session's `cloud.power` (additive, only for such a plan) says `{state: "awake"|"asleep"|"waking", since,
+sleeps: true}`; `cloud.state` stays `ready`. Without `cloud.power`, nothing below happens (`electron/cloud-power.mjs`).
+
+- **Files sync and lending pause** while the session says `asleep`, and also at once when My Cloud answers a held poll
+  `503` with `x-omb-cloud-power: asleep` (it does just before it sleeps). They make no request to My Cloud then, not even
+  a retry, and the session is read every 15 s instead of 60 s while they wait. They resume when it says awake. Files and
+  lending show "My Cloud is asleep" meanwhile.
+- **Opening My Cloud while it sleeps** asks the Admin to wake it first (`POST /api/cloud/desktop/wake`), shows "Waking
+  your Cloud…" after 1.5 s, and gives its sign-in check 30 s instead of 5 (a stopped machine takes about 20 s), so a slow
+  wake never causes a needless new pairing.
+- **Copy:** the menu and the server switcher say "Sleeps when idle" instead of "Always on" for such a Cloud; the buy sheet
+  shows the line for a plan whose allowances say `sleeps`; analytics know the `starter` plan.
+- **App events:** the connected-apps broker asks the Admin to wake a Cloud when it queues an event for one that isn't
+  polling (`cloudflare/composio-broker`, off until `CLOUD_ADMIN_URL` and `CLOUD_GRANT_SECRET` are set).
 
 ## Add a Cloud
 

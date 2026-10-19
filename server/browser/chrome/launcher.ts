@@ -13,9 +13,9 @@ import { needsNoSandbox, type ChromeIdentity } from "./identity.ts";
 import { installChromeForTesting, type ChromeForTestingPin, type DownloadProgress } from "./install.ts";
 import { chromeHost, resolveChromePlan, type ChromeEngine, type ChromeHost, type ChromePlan, type FoundChrome } from "./resolve.ts";
 import { IdentitySidecars } from "./sidecar.ts";
-import { browserLanguage, browserTimeZone, launcherPath, primaryScreen, writeLauncher, type Screen } from "./wrapper.ts";
+import { browserLanguage, browserTimeZone, languageList, launcherPath, primaryScreen, writeLauncher, type LauncherSettings, type Screen } from "./wrapper.ts";
 
-type Ready = { kind: "ready"; chrome: FoundChrome; identity: ChromeIdentity; product: string; fingerprint: string };
+type Ready = { kind: "ready"; chrome: FoundChrome; identity: ChromeIdentity; product: string; fingerprint: string; launcher?: LauncherSettings };
 type State =
   | { kind: "idle" }
   | { kind: "preparing" }
@@ -97,7 +97,25 @@ export class ChromeLauncher implements BrowserLaunch {
   env(): Record<string, string> {
     if (this.state.kind === "failed" || this.plan().kind === "legacy") return {};
     void this.prepare();
+    this.followTimeZone();
     return { AGENT_BROWSER_EXECUTABLE_PATH: this.path, AGENT_BROWSER_HIDE_SCROLLBARS: "0" };
+  }
+
+  /** The owner's app can give a Cloud its time zone at any time (server/time-zone.ts): the next Chrome this starts tells
+   * time in it too, rather than the zone the server had when the launcher was written. */
+  private followTimeZone(): void {
+    const state = this.state;
+    if (state.kind !== "ready" || !state.launcher) return;
+    const timeZone = browserTimeZone(this.options.env, this.options.platform);
+    if (timeZone === state.launcher.timeZone) return;
+    const launcher = { ...state.launcher, timeZone };
+    try {
+      writeLauncher(this.path, launcher, this.options.platform);
+      this.state = { ...state, launcher };
+      this.log(`browser: the next browser started tells time in ${timeZone ?? "the system's zone"}`);
+    } catch (error) {
+      this.log(`browser: could not move the browser to ${timeZone ?? "the system's zone"} (${message(error)})`);
+    }
   }
 
   start(): void {
@@ -141,7 +159,7 @@ export class ChromeLauncher implements BrowserLaunch {
 
   async started(session: string, spec: LaunchSpec): Promise<void> {
     if (this.state.kind !== "ready" || !this.uses(spec) || !ownsBrowserViewport(spec.env ?? {})) return;
-    await this.sidecars.ensure(session, spec, this.state.identity);
+    await this.sidecars.ensure(session, spec, { ...this.state.identity, acceptLanguage: languageList(browserLanguage(this.options.env)) });
   }
 
   stopped(session: string): void {
@@ -190,16 +208,18 @@ export class ChromeLauncher implements BrowserLaunch {
       identity = await this.identityOf(chrome);
     }
     const { env, platform } = this.options;
+    let launcher: LauncherSettings | undefined;
     if (this.options.wrapper !== false) {
       this.screen ??= this.options.screen ? this.options.screen() : primaryScreen(platform, env);
-      writeLauncher(this.path, {
+      launcher = {
         chrome: chrome.path, userAgent: identity.userAgent, screen: await this.screen,
         language: browserLanguage(env), timeZone: browserTimeZone(env, platform),
         ...(platform === "darwin" ? { home: userInfo().homedir } : {}),
-      }, platform);
+      };
+      writeLauncher(this.path, launcher, platform);
       if (platform !== "win32") await (this.options.checkLauncher ?? runsLauncher)(this.path, this.chromeEnv());
     }
-    return { kind: "ready", chrome, identity: { userAgent: identity.userAgent, userAgentMetadata: identity.userAgentMetadata }, product: identity.product, fingerprint: chromeFingerprint(chrome.path) };
+    return { kind: "ready", chrome, identity: { userAgent: identity.userAgent, userAgentMetadata: identity.userAgentMetadata }, product: identity.product, fingerprint: chromeFingerprint(chrome.path), ...(launcher ? { launcher } : {}) };
   }
 
   private async download(pin: ChromeForTestingPin): Promise<FoundChrome> {

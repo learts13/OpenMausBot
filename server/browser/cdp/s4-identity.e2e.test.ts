@@ -13,7 +13,7 @@ import { hostTimeout, HOST_TIMEOUT_FACTOR } from "../../testing/host-timeout.ts"
 import { calibrateIdentity, loadOrCalibrateIdentity, type CalibratedIdentity } from "../chrome/calibrate.ts";
 import { sandboxDisabled } from "../chrome/host-setup.ts";
 import { launchChrome } from "../chrome/launch.ts";
-import { processAlive } from "../chrome/processes.ts";
+import { listProcesses, processAlive } from "../chrome/processes.ts";
 import { CdpBrowser } from "./browser.ts";
 import { IDENTITY_PROBE, identityDifferences, identityFromProbe, type IdentityProbe } from "./identity.ts";
 import { FixtureServer } from "./testing/fixtures.ts";
@@ -178,6 +178,25 @@ suite("S4 identity, quietness, exit and speed on real Chrome", () => {
     expect(probe.reads / probe.iterations).toBe(1);
     expect(probe.webdriver).toBe(false);
     expect(probe.chrome).toBe("object");
+  }, hostTimeout(60_000));
+
+  it("runs none of the browser UI headless never shows: no omnibox popups, no top-chrome renderer", async () => {
+    const run = await startChrome("browser-ui");
+    running.push(run);
+    const page = await run.browser.waitForPage();
+    await page.navigate(fx.page("/plain", "<!doctype html><title>plain</title><p>plain page</p>"));
+    await new Promise((resolve) => setTimeout(resolve, 4_000));
+    const { targetInfos } = await run.browser.connection.root.send<{ targetInfos: Array<{ type: string; url: string }> }>("Target.getTargets", { filter: [{}] });
+    expect(targetInfos.filter((target) => target.type === "browser_ui").map((target) => target.url)).toEqual([]);
+    const processes = (await listProcesses()) ?? [];
+    const tree = new Set([run.chrome.pid]);
+    for (let grew = true; grew;) {
+      grew = false;
+      for (const listed of processes) if (tree.has(listed.ppid) && !tree.has(listed.pid)) { tree.add(listed.pid); grew = true; }
+    }
+    // A Linux renderer can show its zygote's command line, so only renderers that name their type are checked.
+    const renderers = processes.filter((listed) => tree.has(listed.pid) && listed.args.includes("--type=renderer"));
+    expect(renderers.filter((listed) => listed.args.includes("--top-chrome-webui"))).toEqual([]);
   }, hostTimeout(60_000));
 
   it("lets Chrome exit within 5 seconds of the process that launched it being killed", async () => {

@@ -121,6 +121,7 @@ function plainWhen(schedule: RoutineRequestSchedule): string {
     return label.startsWith("Cron ") ? "" : label;
   }
   if (schedule.type === "interval") return scheduleLabel({ ...schedule, anchorAt: schedule.anchorAt ?? 0 });
+  if (schedule.type === "limit_reset") return scheduleLabel({ ...schedule, at: null });
   return scheduleLabel(schedule);
 }
 

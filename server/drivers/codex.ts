@@ -46,7 +46,7 @@ import { volatileContextNote, withContextNote } from "./prompt-split.ts";
 import type { ApprovalMode } from "../../shared/approval-mode.ts";
 import { CodexDeviceAuthController } from "./codex-device-auth.ts";
 import { codexAccountEmail, codexHome } from "./codex-identity.ts";
-import { CODEX_MISSING_CREDENTIALS, CODEX_SIGN_IN_EXPIRED, codexNotSignedIn, codexSignInExpired, codexSignInRefused, codexUserError, type CodexRoute } from "./codex-errors.ts";
+import { CODEX_MISSING_CREDENTIALS, CODEX_SIGN_IN_EXPIRED, codexLimitFacts, codexNotSignedIn, codexSignInExpired, codexSignInRefused, codexUserError, type CodexRoute } from "./codex-errors.ts";
 import { codexLoginCheck, codexLoginStatus, storedCodexLogin } from "./codex-login.ts";
 import { keyRejected, noteKeyAccepted, noteKeyRejected } from "../key-rejections.ts";
 import { classifyResumeFailure, mayReplay, rebuiltSessionNotice, recoveryPromptFor } from "../resume-recovery.ts";
@@ -1187,7 +1187,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         if (message === state.lastError && (state.lastErrorSetup || !setup)) return;
         state.lastError = message;
         state.lastErrorSetup ||= setup;
-        emit({ ...base(threadId, turnId), type: "runtime.error", message, ...(setup ? { setup: true } : {}) });
+        emit({ ...base(threadId, turnId), type: "runtime.error", message, ...(setup ? { setup: true } : {}), ...codexLimitFacts(raw, route) });
       };
       const handleNotification = (msg: any) => {
         const p = msg.params ?? {};
@@ -1690,7 +1690,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             ...base(threadId, turnId),
             type: "runtime.error",
             message,
-            ...(needsAuth ? { setup: true } : {}),
+            ...(needsAuth ? { setup: true } : codexLimitFacts(raw, route)),
           });
           await settle(false, needsAuth ? "auth_required" : verdict.reason === "provider_safety" ? "provider_safety" : "rpc_error");
         }

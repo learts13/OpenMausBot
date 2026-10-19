@@ -25,7 +25,7 @@ export type EventLogAppend = (
 
 const defaultAppend: EventLogAppend = (path, data, options) => appendFile(path, data, options);
 
-type QueuedLog = { event: RuntimeEvent; bytes: number };
+type QueuedLog = { event: RuntimeEvent; line: string; bytes: number };
 
 type TextDelta = Extract<RuntimeEvent, { type: "content.delta" }>;
 
@@ -125,7 +125,9 @@ export class EventBus {
   }
 
   private enqueue(event: RuntimeEvent) {
-    const bytes = Buffer.byteLength(JSON.stringify(redactSecrets(event)));
+    // People paste this log into bug reports: scrub credential-shaped content as the native tee does.
+    const line = JSON.stringify(redactSecrets(event));
+    const bytes = Buffer.byteLength(line);
     const overCount = this.queued.length >= MAX_QUEUED_EVENTS;
     const overBytes = this.queued.length > 0 && this.queuedBytes + bytes > MAX_QUEUED_BYTES;
     if ((overCount || overBytes) && !isTerminalEvent(event)) {
@@ -140,11 +142,11 @@ export class EventBus {
       return;
     }
     this.queuedLogWarnings.delete(event.threadId);
-    this.push(event, bytes);
+    this.push(event, line, bytes);
   }
 
-  private push(event: RuntimeEvent, bytes = Buffer.byteLength(JSON.stringify(redactSecrets(event)))) {
-    this.queued.push({ event, bytes });
+  private push(event: RuntimeEvent, line = JSON.stringify(redactSecrets(event)), bytes = Buffer.byteLength(line)) {
+    this.queued.push({ event, line, bytes });
     this.queuedBytes += bytes;
     this.kick();
   }
@@ -189,25 +191,24 @@ export class EventBus {
     let bytes = 0;
     for (const item of batch) bytes += item.bytes;
     this.queuedBytes -= bytes;
-    const groups: { threadId: string; events: RuntimeEvent[] }[] = [];
+    const groups: { threadId: string; items: QueuedLog[] }[] = [];
     for (const item of batch) {
       const last = groups.at(-1);
-      if (last && last.threadId === item.event.threadId) last.events.push(item.event);
-      else groups.push({ threadId: item.event.threadId, events: [item.event] });
+      if (last && last.threadId === item.event.threadId) last.items.push(item);
+      else groups.push({ threadId: item.event.threadId, items: [item] });
     }
-    for (const group of groups) await this.appendGroup(group.threadId, group.events);
+    for (const group of groups) await this.appendGroup(group.threadId, group.items);
     if (this.queued.length > 0) await this.drain();
   }
 
-  private async appendGroup(threadId: string, events: RuntimeEvent[]): Promise<void> {
+  private async appendGroup(threadId: string, items: QueuedLog[]): Promise<void> {
     const warning = this.pendingLogWarnings.get(threadId);
-    const redacted = events.map((event) => redactSecrets(event));
-    const persisted: unknown[] = redacted;
-    if (warning) persisted.unshift(warning);
+    const events = items.map((item) => item.event);
+    const lines = items.map((item) => item.line);
+    if (warning) lines.unshift(JSON.stringify(warning));
     const file = join(EVENTS_DIR, `${threadId}.ndjson`);
     try {
-      // People paste this log into bug reports: scrub credential-shaped content as the native tee does.
-      await this.appendLog(file, persisted.map((entry) => JSON.stringify(entry)).join("\n") + "\n", { mode: 0o600 });
+      await this.appendLog(file, lines.join("\n") + "\n", { mode: 0o600 });
       if (warning) this.pendingLogWarnings.delete(threadId);
       capThreadLog(file, currentThreadLogCap());
     } catch (error) {

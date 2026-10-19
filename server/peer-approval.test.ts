@@ -309,4 +309,23 @@ describe("peer approval card lifecycle", () => {
     expect(pendingCard(store, from)).toBeTruthy();
     cancelPeerApprovalsFor(from.id); // don't leave a timer pending
   });
+
+  it("reads only the conversations that hold a peer card", () => {
+    const quiet = store.createTask(from.id, "Quiet", false)!;
+    store.appendMessage(quiet.threadId, { role: "user", kind: "text", text: "nothing to approve here" });
+    store.appendMessage(target.threadId, {
+      role: "bot",
+      kind: "options",
+      card: { title: "Pick one", subtitle: "", options: ["A", "B"], requestId: "an-ordinary-question" },
+    });
+    store.appendMessage(from.threadId, {
+      role: "bot",
+      kind: "options",
+      card: { title: "@Asker wants to contact @Helper", subtitle: "ping", options: ["Allow", "Deny"], requestId: "stale", tool: "ask_bot" },
+    });
+    const read = vi.spyOn(store, "messagesFor");
+
+    expect(dismissStalePeerCards(bus)).toBe(1);
+    expect(new Set(read.mock.calls.map(([threadId]) => threadId))).toEqual(new Set([from.threadId]));
+  });
 });

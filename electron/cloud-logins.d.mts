@@ -20,26 +20,10 @@ export interface CloudLoginsBridge {
 }
 
 interface PrivateProcess { postMessage(message: unknown): void }
-interface CloudTarget { origin: string; grant(): Promise<{ origin: string; code: string }> }
 
 export function handoffWhat(input: unknown): HandoffWhat | null;
 export function botsOnCloud(bots: unknown, cloudBotIds: ReadonlySet<string>): "all" | string[];
-export function cloudLoginsView(listed: unknown): CloudLoginsView | null;
 export function createLoginHandoffClient(options?: { timeoutMs?: number; randomId?: () => string }): {
   request(proc: PrivateProcess | null | undefined, what: HandoffWhat): Promise<{ onePassword?: { token: string; grants: Record<string, unknown> }; login?: Record<string, unknown> }>;
   receive(proc: unknown, message: unknown): boolean;
 };
-export function createCloudLogins(deps: {
-  handoff(what: HandoffWhat): Promise<{ onePassword?: { token: string; grants: Record<string, unknown> }; login?: Record<string, unknown> }>;
-  home(): CloudTarget | null;
-  fetch: (url: string, init?: RequestInit) => Promise<Response>;
-  cookieFetch: (url: string, init?: RequestInit) => Promise<Response>;
-}): CloudLoginsBridge;
-export function registerCloudLoginsIpc(deps: {
-  ipcMain: { handle(channel: string, handler: (...args: any[]) => unknown): void };
-  localOnly<T extends (...args: any[]) => unknown>(channel: string, handler: T): T;
-  server(): PrivateProcess | null | undefined;
-  home(): CloudTarget | null;
-  cookieFetch: (url: string, init?: RequestInit) => Promise<Response>;
-  fetch?: (url: string, init?: RequestInit) => Promise<Response>;
-}): { receive(proc: unknown, message: unknown): boolean };

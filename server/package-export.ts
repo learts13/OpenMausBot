@@ -130,7 +130,11 @@ function requiredApps(bots: readonly BotRecord[]) {
   return requirements;
 }
 
+/** A limit-reset schedule waits for this computer's engine sign-in, so it never travels in a package. */
+const portable = (routine: Routine) => routine.schedule.type !== "limit_reset";
+
 function portableSchedule(schedule: Routine["schedule"]): PackageRoutineSchedule {
+  if (schedule.type === "limit_reset") throw new Error("A limit-reset schedule is not portable");
   if (schedule.type === "once") return { type: "once", at: schedule.at };
   if (schedule.type === "cron") return { ...schedule };
   if (schedule.type === "interval") {
@@ -185,7 +189,7 @@ export function createBotPackageExport(input: {
 
   const routineKeys = new Set<string>();
   const routines: NonNullable<BotPackageDefinition["routines"]> = input.routines.flatMap((routine, index) => {
-    if (routine.target === "room-goal") return [];
+    if (routine.target === "room-goal" || !portable(routine)) return [];
     const agent = idToKey.get(routine.botId);
     if (!agent) return [];
     return [{
@@ -617,7 +621,7 @@ export function createTeamPackageExport(input: TeamExportInput): TeamExportResul
     roomMembers.set(group.id, new Set(members));
   }
 
-  const owned = input.routines.filter((routine) => botKeys.has(routine.botId) &&
+  const owned = input.routines.filter((routine) => botKeys.has(routine.botId) && portable(routine) &&
     (routine.target !== "room-goal" || (routine.groupId !== undefined && roomMembers.has(routine.groupId))));
   const routineKeys = stableKeys(owned, recorded?.routines, () => undefined, "routine");
   const routines: PackageRoutine[] = owned.flatMap((routine) => {

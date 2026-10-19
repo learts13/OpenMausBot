@@ -102,6 +102,7 @@ function schedulePhrase(schedule: OverviewFacts["routines"][number]["schedule"],
     const date = new Date(schedule.at).toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone });
     return `Once on ${date} at ${time(schedule.at, timeZone)}`;
   }
+  if (schedule.type === "limit_reset") return schedule.repeat === "every_reset" ? "Each time the AI usage limit resets" : "When the AI usage limit resets";
   if (schedule.type === "interval") {
     const minutes = schedule.everyMinutes;
     if (minutes < 60) return `Every ${minutes} minute${minutes === 1 ? "" : "s"}`;

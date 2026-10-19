@@ -22,6 +22,37 @@ export function codexLimitMessage(said: string, timeZone = hostTimeZone()): stri
     : "Manage your Codex usage in ChatGPT, or switch this bot to another engine until it resets."}`;
 }
 
+const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+
+function clockHours(hour: string, meridiem: string): number {
+  return (Number(hour) % 12) + (meridiem.toUpperCase() === "PM" ? 12 : 0);
+}
+
+/** When Codex says its usage limit resets, from its words "try again at 5:23 PM" (the next such time) or "try again at
+ * Oct 17th, 2026 5:23 PM", in this computer's local time; undefined when it names no time. */
+export function codexLimitResetsAt(said: string, now = Date.now()): number | undefined {
+  if (!USAGE_LIMIT.test(said)) return undefined;
+  const when = /\btry again at ([^.]+)/i.exec(said)?.[1]?.trim() ?? "";
+  const time = /^(\d{1,2}):(\d{2})\s*([AP]M)$/i.exec(when);
+  if (time) {
+    const at = new Date(now);
+    at.setHours(clockHours(time[1]!, time[3]!), Number(time[2]), 0, 0);
+    if (at.getTime() <= now) at.setDate(at.getDate() + 1);
+    return at.getTime();
+  }
+  const dated = /^([A-Za-z]{3})[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4}),?\s+(\d{1,2}):(\d{2})\s*([AP]M)$/i.exec(when);
+  const month = dated ? MONTHS.indexOf(dated[1]!.toLowerCase()) : -1;
+  if (!dated || month < 0) return undefined;
+  const at = new Date(Number(dated[3]), month, Number(dated[2]), clockHours(dated[4]!, dated[6]!), Number(dated[5]), 0, 0).getTime();
+  return Number.isFinite(at) ? at : undefined;
+}
+
+/** The runtime.error fields a Codex usage-limit refusal adds: when it resets, if Codex said. */
+export function codexLimitFacts(raw: string, route: CodexRoute): { limitResetsAt?: number } {
+  const at = route === "own" ? codexLimitResetsAt(raw) : undefined;
+  return at === undefined ? {} : { limitResetsAt: at };
+}
+
 export function codexUserError(value: string, route: CodexRoute, codexErrorInfo?: unknown): string {
   if (route === "plan" && value.includes("subscription_sharing_usage_limit_exceeded")) {
     return "subscription_sharing_usage_limit_exceeded: Your ChatGPT plan usage limit was reached. Manage usage in ChatGPT Settings, or explicitly choose another provider.";

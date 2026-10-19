@@ -90,8 +90,9 @@ HTTP sign-in, a person's hold, restart and idle close) and
 at the screen's device scale, resizes, presets, acknowledged frames, a
 scroll ending on a sharp frame, and the phone's v1 live view against its
 golden from agent-browser), `server/browser/passkey-wall.e2e.test.ts` (a
-sign-in shaped like Google's that stops at a passkey: the bot's notice, and
-the page still usable while the passkey request waits) and
+sign-in shaped like Google's that stops at a passkey or a security key: the
+bot's notice, the request ending at once as unavailable, Try another way, the
+options and a code, and no passkey registered) and
 `server/browser/viewers/stream-v2.e2e.test.ts`
 (the panel's WebSocket stream through its routes: a 1600x1000 panel getting a
 1600x1000 page and 3200x2000 frames on a 2x screen, the page's file picker

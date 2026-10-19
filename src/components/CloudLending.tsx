@@ -12,6 +12,7 @@ const PROBLEMS: Partial<Record<string, LocaleKey>> = {
   "not-cloud": "lending.status.notCloud",
   waiting: "lending.status.waiting",
   paused: "lending.status.paused",
+  asleep: "lending.status.asleep",
   "signed-out": "lending.status.signedOut",
   "account-changed": "lending.status.accountChanged",
   "machine-changed": "lending.status.machineChanged",

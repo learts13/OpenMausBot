@@ -462,7 +462,9 @@ jobs:
     # user agent and client hints are the browser's own in the page, a
     # worker, a service worker and a cross-site frame. On Windows this is
     # also the check that the 0.36.0-omb.1 engine starts Chrome through the
-    # generated batch file. The same platforms as the vitest matrix.
+    # generated batch file. browser-passkey.e2e.test.ts: a passkey step's
+    # request ends at once there, so Try another way works. The same
+    # platforms as the vitest matrix.
     name: browser identity (${{ matrix.os }})
     strategy:
       fail-fast: false
@@ -486,7 +488,9 @@ jobs:
       - name: Drive a real Chrome through the launcher
         env:
           OMB_UI_E2E: "1"
-        run: pnpm exec vitest run scripts/testing/browser-identity.e2e.test.ts
+        # One file at a time: a runner's first Chrome launch is slow (on Windows it waits for a scan of the binary), and two
+        # at once ran the identity probe past its 30 s.
+        run: pnpm exec vitest run scripts/testing/browser-identity.e2e.test.ts scripts/testing/browser-passkey.e2e.test.ts --no-file-parallelism
 
   package-linux:
     needs: static

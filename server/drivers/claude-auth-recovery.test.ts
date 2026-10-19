@@ -1,4 +1,4 @@
-import { expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { TurnAuthenticationRefusedError, type RuntimeEvent } from "../contracts.ts";
 import { claudeAuthRecovery } from "./claude-auth-recovery.ts";
 
@@ -151,4 +151,49 @@ it("matches a multi-block refusal to the error the driver emits for it", async (
     f.recovery.frame("thread", result);
     f.recovery.emit(completed);
   })).rejects.toBeInstanceOf(TurnAuthenticationRefusedError);
+});
+
+describe("a usage-limit refusal", () => {
+  const said = "You've hit your 5-hour limit · resets 3:40pm (UTC)";
+  const limitFrame = {
+    type: "assistant", error: "rate_limit", is_api_error_message: true, api_error: "usage_limit_reached",
+    message: { model: "<synthetic>", content: [{ type: "text", text: said }] },
+  };
+  const limitError: RuntimeEvent = { ...base, type: "runtime.error", message: "This Claude account has reached its 5-hour limit, which resets Oct 19, 3:40 PM (UTC).", limitResetsAt: 1_760_888_400_000 };
+  const quota: RuntimeEvent = { ...base, type: "turn.completed", ok: false, stopReason: "quota", cost: null };
+  const refuse = (f: ReturnType<typeof fixture>) => {
+    f.recovery.frame("thread", { type: "rate_limit_event" });
+    f.recovery.frame("thread", limitFrame);
+    f.recovery.emit(limitError);
+    f.recovery.frame("thread", result);
+    f.recovery.emit(quota);
+  };
+
+  it("rejects the turn with its reset once the process has stopped, publishing nothing", async () => {
+    const f = fixture();
+    await expect(f.send(() => refuse(f))).rejects.toMatchObject({
+      name: "TurnUsageLimitRefusedError", turnId: "turn", message: limitError.message, resetsAt: 1_760_888_400_000,
+    });
+    expect(f.stopped).toHaveBeenCalledOnce();
+    expect(f.events.map(event => event.type)).toEqual(["turn.started"]);
+  });
+
+  it("publishes the limit as usual when recovery is off or the model already worked", async () => {
+    const off = fixture();
+    await expect(off.send(() => refuse(off), false)).resolves.toEqual({ turnId: "turn" });
+    expect(off.events).toContainEqual(limitError);
+    const worked = fixture();
+    await expect(worked.send(() => { worked.recovery.frame("thread", { type: "assistant", message: { content: [{ type: "text", text: "on it" }] } }); refuse(worked); }))
+      .resolves.toEqual({ turnId: "turn" });
+    expect(worked.stopped).not.toHaveBeenCalled();
+    expect(worked.events).toContainEqual(quota);
+  });
+
+  it("does not take assistant prose about limits for a refusal", async () => {
+    const f = fixture();
+    const prose = { ...limitFrame, is_api_error_message: false, error: undefined, api_error: undefined, message: { model: "claude-sonnet-5", content: [{ type: "text", text: said }] } };
+    await expect(f.send(() => { f.recovery.frame("thread", prose); f.recovery.emit(limitError); f.recovery.frame("thread", result); f.recovery.emit(quota); }))
+      .resolves.toEqual({ turnId: "turn" });
+    expect(f.stopped).not.toHaveBeenCalled();
+  });
 });

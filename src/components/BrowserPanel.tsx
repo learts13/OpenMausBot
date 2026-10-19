@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Globe, Hand, Loader2, LockKeyhole, X } from "lucide-react";
+import { Globe, Hand, Loader2, LockKeyhole, Moon, X } from "lucide-react";
 import { browserUnavailableReason } from "@/lib/feature-flags";
 import { t } from "@/lib/i18n";
 import { api, useStore, type Bot } from "@/state/store";
@@ -48,6 +48,7 @@ export function LiveBrowser({ bot, signIn }: { bot: Bot; signIn?: BrowserSignIn 
   const [error, setError] = useState("");
   const [starting, setStarting] = useState(false);
   const [gone, setGone] = useState(false);
+  const [asleep, setAsleep] = useState<"" | "asleep" | "waking">("");
   const [kept, setKept] = useState(false);
   const [showProfiles, setShowProfiles] = useState(false);
   const [showTyping, setShowTyping] = useState(false);
@@ -94,6 +95,7 @@ export function LiveBrowser({ bot, signIn }: { bot: Bot; signIn?: BrowserSignIn 
     setNav(stream ? NO_NAV : { ...NO_NAV, canGoBack: true, canGoForward: true });
     setStarting(false);
     setGone(false);
+    setAsleep("");
     pageNow.current = null;
   }, [bot.id, bot.browserProfile, attempt, stream]);
 
@@ -168,6 +170,8 @@ export function LiveBrowser({ bot, signIn }: { bot: Bot; signIn?: BrowserSignIn 
       if (typeof message.zoom === "number") setZoom(message.zoom);
     } else if (message.type === "starting") {
       setStarting(true);
+    } else if (message.type === "asleep" || message.type === "awake") {
+      setAsleep(message.type === "asleep" ? "asleep" : "");
     }
   }, []);
 
@@ -205,6 +209,10 @@ export function LiveBrowser({ bot, signIn }: { bot: Bot; signIn?: BrowserSignIn 
     if (!window.confirm(t("browser.panel.confirmRestart"))) return;
     setError("");
     if (!clientRef.current?.send({ type: "restart" })) setError("The browser view is not connected. Reconnect it, then try again.");
+  };
+  const wake = () => {
+    if (connected && clientRef.current?.send({ type: "wake" })) setAsleep("waking");
+    else reconnect();
   };
   const togglePip = () => {
     if (floating === bot.id) { closeBrowserPictureInPicture(); return; }
@@ -276,11 +284,12 @@ export function LiveBrowser({ bot, signIn }: { bot: Bot; signIn?: BrowserSignIn 
         onClose={(code, reason) => { if (code === 1013 && reason) setError(reason); }}
         onLeave={() => address.current?.focus()}
       />
-      {heldElsewhere || gone || !connected || starting ? (
+      {asleep || heldElsewhere || gone || !connected || starting ? (
         <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-card/95 p-6 text-center text-[13px] text-ink-secondary">
-          {heldElsewhere ? <Hand size={24} /> : gone ? <Globe size={24} /> : <Loader2 size={24} className="animate-spin" />}
-          <span>{heldElsewhere ? BROWSER_HELD_ELSEWHERE : gone ? t("browser.panel.disconnected") : !starting ? t("browser.panel.opening") : stream ? "Starting the browser…" : t("browser.live.botBusy", { name: bot.name })}</span>
-          {gone ? <button type="button" className="rounded-lg border border-hairline px-3 py-1.5 text-[12px] text-ink hover:bg-inset" onClick={reconnect}>{t("browser.panel.reconnect")}</button> : null}
+          {asleep ? <Moon size={24} /> : heldElsewhere ? <Hand size={24} /> : gone ? <Globe size={24} /> : <Loader2 size={24} className="animate-spin" />}
+          <span>{asleep ? t("browser.panel.asleep") : heldElsewhere ? BROWSER_HELD_ELSEWHERE : gone ? t("browser.panel.disconnected") : !starting ? t("browser.panel.opening") : stream ? "Starting the browser…" : t("browser.live.botBusy", { name: bot.name })}</span>
+          {asleep ? <button type="button" disabled={asleep === "waking"} className="rounded-lg border border-hairline px-3 py-1.5 text-[12px] text-ink hover:bg-inset disabled:opacity-60" onClick={wake}>{t(asleep === "waking" ? "browser.panel.waking" : "browser.panel.wake")}</button>
+            : gone ? <button type="button" className="rounded-lg border border-hairline px-3 py-1.5 text-[12px] text-ink hover:bg-inset" onClick={reconnect}>{t("browser.panel.reconnect")}</button> : null}
         </div>
       ) : null}
     </div>

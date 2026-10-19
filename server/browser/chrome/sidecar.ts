@@ -6,6 +6,7 @@ import { execFile } from "node:child_process";
 import { inRunningBrowser } from "../../browser-engine.ts";
 import { browserRuntimeEnv } from "../../browser-runtime.ts";
 import { connectCdp, type Cdp, type CdpEvent } from "../../browser-sites.ts";
+import { NO_PASSKEY_COMMANDS } from "../cdp/passkeys.ts";
 import type { ChromeIdentity } from "./identity.ts";
 
 /** The pages and workers the browser session attaches to itself; frames and dedicated workers come through their page. */
@@ -19,11 +20,14 @@ export interface IdentitySidecar {
 }
 
 export interface SidecarOptions {
-  /** A headless browser's tabs: see TargetSetup.passkeysWithoutSheet. */
-  passkeysWithoutSheet?: boolean;
+  /** A headless browser's tabs: passkey requests end at once as unavailable (../cdp/passkeys.ts). */
+  noPasskeys?: boolean;
 }
 
-export async function startIdentitySidecar(url: string, identity: ChromeIdentity, connect: typeof connectCdp = connectCdp, options: SidecarOptions = {}): Promise<IdentitySidecar> {
+/** The browser's identity, and the languages its pages are told (a list, see languageList in ./wrapper.ts). */
+export type SidecarIdentity = ChromeIdentity & { acceptLanguage?: string };
+
+export async function startIdentitySidecar(url: string, identity: SidecarIdentity, connect: typeof connectCdp = connectCdp, options: SidecarOptions = {}): Promise<IdentitySidecar> {
   let onClosed!: () => void;
   const closed = new Promise<void>((resolve) => { onClosed = resolve; });
   let cdp: Cdp | null = null;
@@ -43,9 +47,9 @@ export async function startIdentitySidecar(url: string, identity: ChromeIdentity
 }
 
 /** A paused worker answers its overrides only once it runs, so a worker is sent them and released at once. */
-async function applyIdentity(cdp: Cdp, sessionId: string, type: string, identity: ChromeIdentity, options: SidecarOptions): Promise<void> {
+async function applyIdentity(cdp: Cdp, sessionId: string, type: string, identity: SidecarIdentity, options: SidecarOptions): Promise<void> {
   try {
-    if (type === "page" && options.passkeysWithoutSheet) await cdp.send("WebAuthn.enable", { enableUI: false }, sessionId).catch(() => undefined);
+    if (type === "page" && options.noPasskeys) for (const [method, params] of NO_PASSKEY_COMMANDS) await cdp.send(method, params, sessionId).catch(() => undefined);
     if (type === "page" || type === "iframe") {
       await cdp.send("Emulation.setUserAgentOverride", { ...identity }, sessionId);
       await cdp.send("Target.setAutoAttach", PAUSED_ON_START, sessionId);
@@ -73,7 +77,7 @@ export class IdentitySidecars {
 
   attached(session: string): boolean { return this.live.has(session); }
 
-  ensure(session: string, spec: LaunchSpec, identity: ChromeIdentity): Promise<void> {
+  ensure(session: string, spec: LaunchSpec, identity: SidecarIdentity): Promise<void> {
     if (this.live.has(session)) return Promise.resolve();
     let attaching = this.attaching.get(session);
     if (!attaching) {
@@ -88,10 +92,10 @@ export class IdentitySidecars {
     this.live.delete(session);
   }
 
-  private async attach(session: string, spec: LaunchSpec, identity: ChromeIdentity): Promise<void> {
+  private async attach(session: string, spec: LaunchSpec, identity: SidecarIdentity): Promise<void> {
     const url = await this.cdpUrl(session, spec);
     if (!url) return;
-    const sidecar = await this.start(url, identity, undefined, { passkeysWithoutSheet: spec.env?.AGENT_BROWSER_HEADLESS === "1" });
+    const sidecar = await this.start(url, identity, undefined, { noPasskeys: spec.env?.AGENT_BROWSER_HEADLESS === "1" });
     this.live.get(session)?.close();
     this.live.set(session, sidecar);
     void sidecar.closed.then(() => { if (this.live.get(session) === sidecar) this.live.delete(session); });

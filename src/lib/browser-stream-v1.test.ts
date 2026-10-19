@@ -225,6 +225,18 @@ describe("a v1 live view whose stream dropped", () => {
     client.stop();
   });
 
+  it("stops for good when its browser closed unused, without a notice, and does not start it again on focus", () => {
+    const { client, handlers } = open();
+    latest().emit("ready", { viewerId: "v1" });
+    latest().fail({ type: "error", retryable: false, asleep: true, message: "This browser closed after it sat unused, to save memory." });
+    vi.advanceTimersByTime(30_000);
+    page.dispatchEvent(new Event("focus"));
+    expect(FixtureEventSource.instances).toHaveLength(1);
+    expect(handlers.onMessage).toHaveBeenCalledExactlyOnceWith({ type: "asleep" });
+    expect(handlers.onGone).toHaveBeenCalledOnce();
+    client.stop();
+  });
+
   it("does not retry a refusal for good on focus", () => {
     const { client } = open();
     latest().fail({ message: "Browser access is disabled" });

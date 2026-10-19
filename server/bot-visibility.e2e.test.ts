@@ -294,6 +294,36 @@ posixOnly("per-bot visibility on a shared workspace", () => {
     expect(JSON.stringify(map)).not.toContain(ids.hr);
   });
 
+  it("marks as seen only the failed routine runs a member may see", async () => {
+    const failing = async (name: string, people?: string[]) => {
+      const bot = await makeBot(name, "Ops");
+      expect((await api("PATCH", `/api/bots/${bot.id}`, { modelSelection: { instanceId: "missing-instance", model: "fake-model" } }, BOSS)).status).toBe(200);
+      if (people) expect((await api("PATCH", `/api/bots/${bot.id}`, { visibility: { people } }, BOSS)).status).toBe(200);
+      const routine = await api("POST", "/api/routines", { name: `${name} sweep`, botId: bot.id, prompt: `SECRET-${name}`, enabled: false,
+        schedule: { type: "interval", everyMinutes: 60, anchorAt: Date.now() + 86_400_000 } }, BOSS);
+      expect(routine.status, JSON.stringify(routine.body)).toBe(201);
+      const started = await api("POST", `/api/routines/${routine.body.routine.id}/run`, undefined, BOSS);
+      expect(started.status, JSON.stringify(started.body)).toBeLessThan(300);
+      return routine.body.routine.id as string;
+    };
+    const hidden = await failing("Ledger Lynx", [ADA]);
+    const shown = await failing("Lobby Llama");
+    const runOf = async (routineId: string) => (await api("GET", "/api/routines", undefined, BOSS)).body.runs.find((run: any) => run.routineId === routineId);
+    expect(await waitFor(async () => (await runOf(hidden))?.status === "failed" && (await runOf(shown))?.status === "failed"), log.slice(-2_000)).toBe(true);
+
+    const swept = await api("POST", "/api/routine-runs/seen-all", undefined, BOB);
+    expect(swept.status).toBe(200);
+    expect(swept.body.runs.map((run: any) => run.routineId)).toContain(shown);
+    expect(JSON.stringify(swept.body)).not.toContain(hidden);
+    expect(JSON.stringify(swept.body)).not.toContain("SECRET-Ledger Lynx");
+    expect((await runOf(shown)).seenAt).toEqual(expect.any(Number));
+    expect((await runOf(hidden)).seenAt).toBeUndefined();
+
+    const adaSwept = await api("POST", "/api/routine-runs/seen-all", undefined, ADA);
+    expect(adaSwept.body.runs.map((run: any) => run.routineId)).toContain(hidden);
+    expect((await runOf(hidden)).seenAt).toEqual(expect.any(Number));
+  });
+
   it("withdraws real scan results when an audience changes before the response", async () => {
     const hold = join(home, ".openmausbot", "hold-search-result");
     let pending: Promise<{ status: number; body: any }> | undefined;

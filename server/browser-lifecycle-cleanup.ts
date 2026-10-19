@@ -376,11 +376,12 @@ export class BrowserCleanupCoordinator {
   }
 }
 
-/** Default for config.json's browserEngine.idleTimeoutMinutes (1-60); agent-browser's own backstop closes an idle daemon after an hour. */
+/** Defaults for config.json's browserEngine.idleTimeoutMinutes (1-60); agent-browser's own backstop closes an idle daemon after an hour. */
 export const DEFAULT_BROWSER_IDLE_MINUTES = 10;
+export const CLOUD_HOME_BROWSER_IDLE_MINUTES = 3;
 
-export function browserIdleMs(cfg: { browserEngine?: { idleTimeoutMinutes?: number } }): number {
-  return (cfg.browserEngine?.idleTimeoutMinutes ?? DEFAULT_BROWSER_IDLE_MINUTES) * 60_000;
+export function browserIdleMs(cfg: { browserEngine?: { idleTimeoutMinutes?: number } }, { cloudHome = false }: { cloudHome?: boolean } = {}): number {
+  return (cfg.browserEngine?.idleTimeoutMinutes ?? (cloudHome ? CLOUD_HOME_BROWSER_IDLE_MINUTES : DEFAULT_BROWSER_IDLE_MINUTES)) * 60_000;
 }
 
 /** agent-browser writes one `<session>.pid` per daemon, so with none there is nothing to ask about. */

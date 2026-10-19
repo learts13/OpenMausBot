@@ -1,0 +1,96 @@
+---
+title: Using the desktop app with My Cloud
+description: What lives on your computer and what lives on My Cloud, how to send your bots, logins and 1Password over, lending your computer, passkey sign-ins, and where the logs are.
+---
+
+With MausBot Cloud you have two places in one app:
+
+- **This computer**: the OpenMausBot that runs on your Mac or PC.
+- **My Cloud**: the one that keeps running when your computer is off.
+
+You switch between them with the switcher at the top of the sidebar. Everything about the two lives in one place: **Settings → MausBot Cloud**.
+
+## What lives where
+
+Each place keeps its own bots, chats and settings, so the two can look different. My Cloud may have your Chief of Staff and nine other bots while this computer has one. That's normal, and you can bring this computer's things over at any time.
+
+| | Goes to My Cloud | How |
+|---|---|---|
+| **Bots** (instructions, picture, settings, skills) | Yes | Send everything, or by itself while **Keep My Cloud up to date** is on |
+| **A new bot's memory notes** | Yes, once | With the bot, the first time it goes |
+| **Logins and 1Password** | Yes | Same, over a private connection, never through a chat |
+| **Your name, email, About me and language** | Yes | Same |
+| **Chats** | When you ask | **Bring newer chats** adds the ones My Cloud doesn't have |
+| **Routines and automations** | No | Both places would run them, so nothing would run once. Set them up on My Cloud. |
+| **Sign-ins to Claude, ChatGPT and other engines, API keys** | No | They belong to each machine. Sign in on My Cloud itself. |
+| **Connected apps** (Gmail, Calendar, Slack…) | No | Connect them on My Cloud: each side has its own connections. |
+| **MCP tools** | No | Add them on My Cloud. |
+| **Files** | Folders you choose | The **Files** page |
+
+Nothing ever goes the other way by itself. What you change on My Cloud stays on My Cloud.
+
+## Send your bots, logins and 1Password to My Cloud
+
+Open **Settings → MausBot Cloud** on this computer. **This computer and My Cloud** shows both sides next to each other: how many bots, skills and logins each has, and what's different, for example *Ember only here* or *1Password only here*.
+
+<ProductScreenshot name="docs-my-cloud-compare" alt="Settings, MausBot Cloud: This computer and My Cloud side by side, with Send everything to My Cloud and Keep My Cloud up to date" caption="Both sides at a glance. Send everything adds and updates; it never deletes anything." position="top" />
+
+- **Send everything to My Cloud** sends what My Cloud doesn't have yet, and anything you changed on this computer since. Press it as often as you like: it adds and updates, and never deletes anything on either side.
+- **Keep My Cloud up to date with this computer** is on unless you turn it off. While the app is open, new bots, skills, logins and settings on this computer go to My Cloud by themselves, a minute or two later. It waits while My Cloud is asleep and never wakes it.
+- **Choose what goes** lists everything. Turn a switch off to keep that item only on this computer.
+
+A few rules keep this safe:
+
+- **What you change on My Cloud is kept.** If you edit a bot on My Cloud, a later change on this computer never overwrites it. The list shows *Different on My Cloud*, with **Use this computer's** if you want this computer's version there.
+- **What you remove on My Cloud stays removed.** Its switch turns off. Turn it back on to send it again.
+- **A bot keeps its logins.** A login or a 1Password vault kept to Ember is kept to Ember on My Cloud too.
+- **Engines.** A bot that uses an engine My Cloud isn't signed in to uses My Cloud's own engine instead, and the result says so.
+
+### From My Cloud
+
+When you open My Cloud in the desktop app and this computer has something My Cloud doesn't, a line at the top says so, for example *Ember, 2 skills and 1Password are on This computer but not here*. **Bring them over** sends them at once. **Not now** hides the line until something new appears.
+
+<ProductScreenshot name="docs-my-cloud-strip" alt="My Cloud in the desktop app, with a line at the top: Ember, 2 logins, 1Password and your settings are on This computer but not here. Bring them over. Not now." position="top" />
+
+### From the switcher
+
+The switcher at the top of the sidebar shows, under **My Cloud**, what isn't there yet, for example *1 bot and 4 more not on My Cloud · Send*. Choose it to send, and Settings opens on the result.
+
+<ProductScreenshot name="docs-my-cloud-switcher" alt="The server switcher: This computer, My Cloud, and the line 1 bot and 4 more not on My Cloud, Send" position="top" />
+
+### One login at a time
+
+**Settings → Logins** on this computer says for each login whether it's *On this computer only* or *On this computer and My Cloud*. **Also use on My Cloud** sends that one login, or 1Password, right away.
+
+### Your chats
+
+Chats stay where they happened. To add this computer's chats to My Cloud, use **Bring newer chats to My Cloud** at the bottom of **Settings → MausBot Cloud**. It only adds; it never replaces a chat My Cloud has. A bot you sent with **Send everything** is the same bot on both sides, so Bring newer chats adds its chats too.
+
+**Copy this computer's bots and chats** (under it) is different: it replaces everything on My Cloud with this computer's, after backing My Cloud up. Use it only to start My Cloud over.
+
+## Sign in to Claude or ChatGPT on My Cloud
+
+Sign-ins and API keys never leave the machine they were made on. Open My Cloud in the app, then sign in under **Settings → AI** there, or follow the setup card in its first chat.
+
+## Let My Cloud use your computer
+
+**Settings → MausBot Cloud → Let My Cloud use this computer** lets bots on My Cloud use the folders, apps and screen you choose on this computer, while it's awake and the app is open. With apps and screen turned on, a bot on My Cloud can also open websites in your computer's own browser, where your usual sign-ins and passkeys work. Turn it off there at any time, or from the app's icon in the menu bar or taskbar.
+
+## Signing in to Google and other passkey sites
+
+A passkey lives on your own phone or computer, so a browser on My Cloud can't use it. What works:
+
+1. **Lend your computer** (above, with apps and screen) and ask the bot to use your computer's browser for that site. Approve the passkey on your computer when it asks.
+2. **Try another way**: in the bot's browser, on the passkey step, choose **Try another way**, then your password and a code from your authenticator app, a text message or a backup code.
+3. **For Gmail, Calendar and Drive**, connect them under **Connected apps** on My Cloud instead. The bot then doesn't need a browser sign-in at all.
+
+Step-by-step help, and what to do when a page doesn't respond: [Signing in to Google from a cloud browser](../troubleshooting/google-sign-in-cloud-browser.mdx).
+
+## Which version am I on?
+
+My Cloud updates by itself, a little after each desktop release. **Settings → MausBot Cloud** shows its version next to *My Cloud is online*, and says so when it's older than this computer's. To see this computer's version, open the menu under your name at the bottom of the sidebar and choose **About**.
+
+## Where are the logs?
+
+- **This computer**: **Settings → General → Diagnostics → Open logs folder**. **Export Diagnostics…** saves one file with secrets removed, ready to send to support. Details: [Where are my logs?](../troubleshooting/logs.mdx).
+- **My Cloud** keeps its own logs on the Cloud machine. MausBot Cloud support can read them: tell them what went wrong and roughly when.

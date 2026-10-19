@@ -42,11 +42,12 @@ export function LentComputersCard() {
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     let alive = true;
-    const load = () => api<{ known?: KnownLentComputer[] }>("/api/shared-computers")
+    // The 15-second poll never wakes a Cloud home that went to sleep.
+    const load = (background = false) => api<{ known?: KnownLentComputer[] }>("/api/shared-computers", background ? { background } : undefined)
       .then((answer) => { if (alive) { setKnown(answer.known ?? []); setFailed(false); } })
       .catch(() => { if (alive) setFailed(true); });
     void load();
-    const timer = setInterval(() => void load(), 15_000);
+    const timer = setInterval(() => void load(true), 15_000);
     return () => { alive = false; clearInterval(timer); };
   }, []);
   const manage = window.ogb?.cloudLending;

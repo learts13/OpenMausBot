@@ -100,14 +100,16 @@ export function loadEnvironmentId(dataDir: string): string {
   }
 }
 
-export function serverVersion(): string {
+/** The desktop's own version, else the bundle's package.json (scripts/bundle-server.mjs), else the checkout's. */
+export function serverVersion(root = SERVER_ROOT): string {
   const fromEnv = process.env.OMB_APP_VERSION?.trim();
   if (fromEnv) return fromEnv;
-  try {
-    const pkg: unknown = JSON.parse(readFileSync(join(SERVER_ROOT, "..", "package.json"), "utf8"));
-    const version = Reflect.get(Object(pkg), "version");
-    if (typeof version === "string" && version) return version;
-  } catch {
+  for (const file of [join(root, "package.json"), join(root, "..", "package.json")]) {
+    try {
+      const version = Reflect.get(Object(JSON.parse(readFileSync(file, "utf8"))), "version");
+      if (typeof version === "string" && version) return version;
+    } catch {
+    }
   }
   return "unknown";
 }

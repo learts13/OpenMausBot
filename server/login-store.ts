@@ -159,6 +159,15 @@ export class LoginStore {
     return this.read().logins.map(summarizeLogin).sort((a, b) => a.site.localeCompare(b.site) || a.username.localeCompare(b.username));
   }
 
+  /** When each login last changed, for Send to My Cloud's comparison: never a secret. */
+  changes(): Array<{ id: string; site: string; hosts: string[]; exactHost: boolean; username: string; updatedAt: number }> {
+    return this.read().logins.map(({ id, site, hosts, exactHost, username, updatedAt }) => ({ id, site, hosts, exactHost, username, updatedAt }));
+  }
+
+  onePasswordConnectedAt(): number | null {
+    return this.read().onePassword?.connectedAt ?? null;
+  }
+
   get(id: string): StoredLogin | null {
     return this.read().logins.find((login) => login.id === id) ?? null;
   }

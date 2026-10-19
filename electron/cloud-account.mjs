@@ -19,6 +19,9 @@ const TIER = /^[a-z][a-z0-9-]{0,23}$/;
 const REFRESH_MS = 60_000;
 const STEADY_MS = 15 * 60_000;
 const SETUP_REFRESH_MS = 15_000;
+/** While My Cloud sleeps and Files or lending waits for it: the session every 15 s, so they resume soon after it wakes. */
+const ASLEEP_REFRESH_MS = 15_000;
+const WAKE_STATES = Object.freeze(["awake", "waking"]);
 /** While a checkout this app opened waits for its payment and setup: the session every 3 s (30 minutes at most). */
 const WATCH_REFRESH_MS = 3_000;
 const CHECKING_AFTER = 2;
@@ -60,14 +63,14 @@ const sameHint = (left, right) => (left?.tier ?? null) === (right?.tier ?? null)
 
 export function createCloudAccountClient({ store, openBrowser, platform, deviceName, appVersion,
   origin = CLOUD_ORIGIN, fixture = false, fetch: fetcher = globalThis.fetch, now = Date.now, onState = () => {},
-  setTimer = setTimeout, clearTimer = clearTimeout, warn = message => console.warn(message) }) {
+  setTimer = setTimeout, clearTimer = clearTimeout, warn = message => console.warn(message), awaitingWake = () => false }) {
   origin = cloudOrigin(origin, fixture);
   const staging = origin === STAGING_CLOUD_ORIGIN;
   let grant = null, issued = null, cleanup = null, pending = null, cleanupNeeded = false;
   let value = { status: "signed-out", message: "restoring" }, generation = 0, timer = null, closed = false, clearing = null, refreshing = null;
   let verifiedUntil = 0, restoring = false, controller = new AbortController(), failures = 0;
   let plan = null, savedHint = null;
-  let offerCache = null, offerPending = null;
+  let offerCache = null, offerPending = null, waking = false;
   /** The checkout this app opened, its address kept here for Reopen and Copy link: never published, never asked for again. */
   let opened = null;
   /** An email code on its way: the attempt the Admin answered, kept in main only. */
@@ -81,7 +84,8 @@ export function createCloudAccountClient({ store, openBrowser, platform, deviceN
   const checkout = () => opened && now() - opened.startedAt < CHECKOUT_KEPT_MS
     ? { plan: opened.plan, startedAt: opened.startedAt, ...(opened.signIn ? { signIn: true } : {}), ...(opened.url ? { link: true } : {}), ...(opened.done ? { done: true } : {}) } : null;
   const withCheckout = current => {
-    const open = checkout(), next = open ? { ...current, checkout: open } : current;
+    const open = checkout(), shown = waking && current.status === "connected" ? { ...current, waking: true } : current;
+    const next = open ? { ...shown, checkout: open } : shown;
     return staging ? { ...next, staging: true } : next;
   };
   const state = () => {
@@ -208,7 +212,7 @@ export function createCloudAccountClient({ store, openBrowser, platform, deviceN
       publish({ ...view("connected"), entitlement: access, ...(machine ? { machine } : {}), ...(purchase ? { purchase } : {}),
         ...(trial ? { trial } : {}), ...(credit ? { credit } : {}), ...(offer ? { offer } : {}), verifiedAt: now(), verifiedUntil });
       const settingUp = machine?.status === "provisioning" || (access.status === "active" && !machine) || Boolean(purchase);
-      const delay = watching() && machine?.status !== "ready" ? WATCH_REFRESH_MS : settingUp ? SETUP_REFRESH_MS : REFRESH_MS;
+      const delay = watching() && machine?.status !== "ready" ? WATCH_REFRESH_MS : settingUp ? SETUP_REFRESH_MS : awaitingWake() ? ASLEEP_REFRESH_MS : REFRESH_MS;
       schedule(refresh, Math.min(delay, verifiedUntil - now()));
     } catch (error) {
       if (!current(stamp)) return state();
@@ -439,6 +443,27 @@ export function createCloudAccountClient({ store, openBrowser, platform, deviceN
       if (result?.ok !== true) throw new Error("Invalid Cloud response.");
     },
     homeTarget,
+    /** The Admin's last verified word on a Cloud whose plan sleeps, kept while a re-check fails; null for any other. */
+    power: () => (value.status === "connected" ? value.machine?.power ?? null : null),
+    /** Starts a sleeping Cloud through the Admin (`awake` once started, `waking` if it is still starting), then reads the
+     *  session again so Files and lending resume. Null when there is nothing to wake or the Admin can't say. */
+    async wakeHome() {
+      const current = grant, power = value.status === "connected" ? value.machine?.power : null;
+      if (!current || !power || power.state === "awake") return null;
+      let woke = null;
+      try {
+        const result = await request("wake", { method: "POST", body: {}, token: current.token });
+        woke = WAKE_STATES.includes(result?.state) ? result.state : null;
+      } catch {}
+      await refresh().catch(() => {});
+      return woke;
+    },
+    /** Opening a sleeping Cloud takes a moment: the state says so meanwhile. */
+    setWaking(on) {
+      if (waking === (on === true)) return;
+      waking = on === true;
+      publish(value);
+    },
     async growDisk(sizeGb) {
       const current = grant;
       if (!current || state().status !== "connected") throw new Error("My Cloud is not ready yet.");
@@ -492,7 +517,8 @@ export function cloudMenuSublabel(state, date) {
   if (state?.status !== "connected") return null;
   const trial = state.trial;
   if (state.entitlement?.plan === "pro" && state.entitlement.status === "active") {
-    return (trial?.state === "active" || trial?.state === "ending") ? `Free trial until ${date(trial.endsAt)}` : "Always on";
+    if (trial?.state === "active" || trial?.state === "ending") return `Free trial until ${date(trial.endsAt)}`;
+    return state.machine?.power?.sleeps ? "Sleeps when idle" : "Always on";
   }
   return state.machine || trial ? "Stopped" : null;
 }
@@ -502,7 +528,8 @@ export function cloudPlanSnapshot(state, { notice = null } = {}) {
   const tier = state?.status === "connected" ? state.entitlement?.tier : state?.lastPlan?.tier;
   const named = typeof tier === "string" ? { tier } : {};
   const trial = state?.status === "connected"
-    ? { ...(state.trial ? { trial: state.trial } : {}), ...(state.credit ? { credit: state.credit } : {}), ...(notice && state.trial ? { notice } : {}) } : {};
+    ? { ...(state.trial ? { trial: state.trial } : {}), ...(state.credit ? { credit: state.credit } : {}), ...(notice && state.trial ? { notice } : {}),
+      ...(state.machine?.power?.sleeps ? { sleeps: true } : {}) } : {};
   if (state?.status === "connected" && state.entitlement?.plan === "pro") return { status: state.entitlement.status === "active" ? "paid" : "attention", ...named, ...trial };
   if (state?.status === "reauth-required") return { status: "signin", ...(state.lastPlan ? { tier: state.lastPlan.tier ?? "pro" } : {}) };
   if (state?.status !== "connected" && state?.lastPlan) return { status: "checking", ...named };

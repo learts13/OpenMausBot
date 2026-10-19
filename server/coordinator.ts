@@ -157,6 +157,8 @@ export interface Coordinator {
   activeDirect(threadId: string): boolean;
   assignerOf(threadId: string): HandoffView | undefined;
   outstandingDirect(threadId: string): HandoffView[];
+  /** Direct conversations whose turn waits on teammates: an open handoff it made that owes a reply, or a root parked to resume with no question for the person. */
+  awaitingTeammateThreads(): Set<string>;
   liveEdges(): LiveHandoffEdge[];
   stopAwaitingDirect(threadId: string, reason?: string): HandoffView[];
   /** The next start goes on with this thread's turn, so a shutdown's "cut" line would be false. */

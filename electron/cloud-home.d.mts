@@ -1,3 +1,4 @@
+export { createCloudPowerGate, openSleepingCloud } from "./cloud-power.mjs";
 export type CloudMachineStatus = "provisioning" | "ready" | "stopped" | "payment-problem" | "failed";
 export type CloudSetupStep = "reserving" | "storage" | "starting" | "checking";
 export type CloudUnreachableCause = "host" | "no_answer";
@@ -13,6 +14,8 @@ export interface CloudMachine {
   disk?: { gb: number; maxGb: number };
   /** Ready, but the Admin's health checks can't reach it: its server is being restarted by the hosting provider (`host`), or it stopped answering. */
   unreachable?: { cause: CloudUnreachableCause; since: number };
+  /** Only for a plan that sleeps when idle: whether it is awake now, as the Admin says. */
+  power?: import("./cloud-power.mjs").CloudPower;
 }
 /** A payment received but not yet linked to this account: nobody pays twice. */
 export interface CloudPurchase { state: "confirming" | "held"; tier?: string; paidAt?: number }
@@ -49,6 +52,8 @@ export interface CloudPlanAllowances {
   diskGb: number; maxDiskGb: number;
   /** Cloud computers at once, and cloud computer hours and voice characters a month. */
   computers: number; computerHours: number; voiceCharacters: number;
+  /** It sleeps when idle and wakes when someone or a schedule needs it. */
+  sleeps?: true;
 }
 /** One plan OpenMausBot Cloud sells: its monthly price before tax in US cents,
  * and its free trial's days when it comes with one. */
@@ -77,6 +82,7 @@ export declare const CLOUD_MACHINE_STATUSES: readonly CloudMachineStatus[];
 export declare const CLOUD_MACHINE_CONNECTABLE: readonly CloudMachineStatus[];
 export declare const CLOUD_SETUP_STEPS: readonly CloudSetupStep[];
 export declare const CLOUD_UNREACHABLE_CAUSES: readonly CloudUnreachableCause[];
+export declare function parseCloudPower(input: unknown): import("./cloud-power.mjs").CloudPower | null;
 export declare function parseCloudSummary(input: unknown): CloudMachine | null;
 export declare function cloudUnreachableText(state: unknown, origin?: string | null): string | null;
 export declare function parseCloudPurchase(input: unknown): CloudPurchase | null;

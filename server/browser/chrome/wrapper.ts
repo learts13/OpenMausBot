@@ -108,6 +108,16 @@ export function browserLanguage(env: NodeJS.ProcessEnv): string | undefined {
   return match ? (match[2] ? `${match[1]}-${match[2]}` : match[1]) : undefined;
 }
 
+/** The languages pages are told, best first, for the person's language: "pt-BR" gives "pt-BR,pt,en-US,en", none "en-US,en".
+ * As a list, never with q-values: Chrome adds those to the Accept-Language header itself, and navigator.languages would
+ * otherwise list "en;q=0.9" as a language. A headless Chrome on Linux tells pages only its first language (Chrome 155),
+ * so the bots' browsers are given the whole list. */
+export function languageList(language: string | undefined): string {
+  const first = language ?? "en-US";
+  const base = first.split("-")[0]!;
+  return [first, ...(base !== first ? [base] : []), ...(base === "en" ? [] : ["en-US", "en"])].join(",");
+}
+
 /** The zone the server runs in, which is also the one each turn's clock shows; Windows Chrome ignores TZ. */
 export function browserTimeZone(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): string | undefined {
   const zone = env.OMB_BROWSER_TIMEZONE?.trim() || (platform === "win32" ? "" : env.TZ?.trim() || "");

@@ -121,13 +121,14 @@ export function CanvasComputers({ open, createRequest, drop, sections, onClose, 
     if (section !== undefined) requestAssignment(active.computer, section);
   };
 
-  const refresh = useCallback(async () => {
+  // `background`: the 20-second poll, which never wakes a Cloud home that went to sleep.
+  const refresh = useCallback(async (background = false) => {
     read.current?.abort();
     const controller = new AbortController();
     read.current = controller;
     setLoading(true);
     try {
-      const value: Inventory = await api("/api/team-computers", { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]) });
+      const value: Inventory = await api("/api/team-computers", { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]), background });
       if (controller.signal.aborted || !mounted.current) return;
       setInventory(value);
       setReadError("");
@@ -146,7 +147,7 @@ export function CanvasComputers({ open, createRequest, drop, sections, onClose, 
   useEffect(() => {
     if (!open) return;
     void refresh();
-    const timer = window.setInterval(() => { if (!pending.current && document.visibilityState === "visible") void refresh(); }, 20_000);
+    const timer = window.setInterval(() => { if (!pending.current && document.visibilityState === "visible") void refresh(true); }, 20_000);
     return () => window.clearInterval(timer);
   }, [open, refresh]);
   useEffect(() => { if (createRequest > 0) setCreating(true); }, [createRequest]);

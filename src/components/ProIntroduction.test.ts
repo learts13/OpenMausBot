@@ -6,14 +6,13 @@ import type { CloudOffer } from "../../electron/cloud-home.mjs";
 
 const f = vi.hoisted(() => ({ values: [] as unknown[], index: 0, effects: [] as EffectCallback[], dispatch: null as any }));
 vi.mock("react", async original => ({ ...await original<typeof import("react")>(),
-  useId: () => "live-plan-title",
   useState: (initial: unknown) => { const index = f.index++; if (!(index in f.values)) f.values[index] = typeof initial === "function" ? initial() : initial;
     return [f.values[index], (next: unknown) => { f.values[index] = next; }]; },
   useEffect: (effect: EffectCallback) => { f.effects.push(effect); },
 }));
 vi.mock("@/state/store", () => ({ useStore: () => ({ dispatch: f.dispatch }),
   CLOUD_LINK_SETTINGS: { type: "toggleAppSettings", open: true, section: "cloudAccount", cloudLink: true } }));
-import { LiveProPrompt, ProSettingsCard, proOfferAvailable } from "./ProIntroduction";
+import { ProSettingsCard, proOfferAvailable } from "./ProIntroduction";
 
 const PLANS = [{ tier: "personal", label: "Personal", amount: 2900, trialDays: 7 }, { tier: "pro", label: "Pro", amount: 4900, trialDays: 7 }];
 const TRIAL: CloudOffer = { plans: PLANS, recommended: "pro", creditUsd: 5, refundDays: 14 };
@@ -108,48 +107,4 @@ it("never offers a plan to anyone who pays, may pay, or whose state is unknown; 
   expect(await card(signedOut)).toBe("");
   vi.stubGlobal("window", {});
   expect(await card(signedOut)).toBe("");
-});
-
-it("for a Live call, offers the current Cloud plans only to signed-out or verified free accounts", async () => {
-  const out = await card(signedOut, LiveProPrompt);
-  for (const text of ["Live calls from your phone need a Pro plan", "Personal, Pro or Max", "MausBot Cloud plans from $29/month", "Start free trial", "Compare plans", "Sign in to your Cloud plan"]) expect(out).toContain(text);
-  press("Sign in to your Cloud plan", LiveProPrompt);
-  expect(f.dispatch).toHaveBeenCalledWith({ type: "openCloudAdd", source: "app_settings", signIn: true });
-  press("Compare plans", LiveProPrompt); await flush();
-  expect(openExternal).not.toHaveBeenCalled();
-  press("Start free trial", LiveProPrompt);
-  expect(f.dispatch).toHaveBeenCalledWith({ type: "openCloudAdd", source: "app_settings" });
-  const free = await card(plan(), LiveProPrompt);
-  expect(free).toContain("Start free trial"); expect(free).not.toContain("Sign in to your Cloud plan");
-  offer = null;
-  const unknownPrice = await card(plan(), LiveProPrompt);
-  expect(unknownPrice).toContain("Add a Cloud"); expect(unknownPrice).not.toContain("$29");
-});
-it("for a Live call, a paid, pending or unknown plan is never sold another plan", async () => {
-  for (const [state, text] of [
-    [plan({ entitlement: paid("pro", "inactive") }), "Pro · not active right now"],
-    [plan({ machine: { status: "payment-problem", origin: "https://home.fly.dev" } }), "MausBot Cloud · not active right now"],
-    [plan({ purchase: { state: "confirming", tier: "personal" } }), "Personal · payment received"],
-    [plan({ entitlement: paid("max") }), "Max active · verified by MausBot Cloud"],
-    [{ status: "unavailable", lastPlan: { tier: "personal", active: false } }, "Personal · checking with MausBot Cloud…"],
-    [{ status: "reauth-required", message: "expired", lastPlan: { tier: "max", active: false } }, "Sign in again to use My Cloud on this computer"],
-    [{ status: "unavailable" }, null], [{ status: "connecting" }, null], [{ status: "signed-out", message: "restoring" }, null],
-  ] as const) {
-    const html = await card(state as CloudAccountState, LiveProPrompt);
-    expect(html).toContain("Live calls from your phone need a Pro plan");
-    if (text) expect(html).toContain(text);
-    expect(html).toContain("MausBot Cloud settings");
-    for (const offer of ["Start free trial", "Compare plans", "$29", "Add a Cloud"]) expect(html).not.toContain(offer);
-  }
-  expect(bridge.offer).not.toHaveBeenCalled();
-  press("MausBot Cloud settings", LiveProPrompt);
-  expect(f.dispatch).toHaveBeenCalledWith({ type: "toggleAppSettings", open: true, section: "cloudAccount" });
-});
-it("for a Live call, a browser or remote server only explains the requirement", async () => {
-  for (const ogb of [{}, { cloudAccount: bridge, remoteClient: { active: true } }]) {
-    vi.stubGlobal("window", { ogb });
-    const html = await card(signedOut, LiveProPrompt);
-    expect(html).toContain("Live calls from your phone need a Pro plan");
-    for (const more of ["Start free trial", "Compare plans", "Sign in to your Cloud plan", "MausBot Cloud settings"]) expect(html).not.toContain(more);
-  }
 });

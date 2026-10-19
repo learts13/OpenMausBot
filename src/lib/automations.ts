@@ -7,6 +7,7 @@ import type { Routine, RoutineRun, RoutineSchedule } from "@/lib/routines";
 import type { WebhookAttempt, WebhookTrigger } from "@/lib/webhooks";
 import type { AppTrigger } from "@/lib/app-triggers";
 import { appProblem, appStatusParts, appWhen, skippedToday } from "@/lib/app-automations";
+import { limitResetWhen } from "@/lib/limit-resets";
 import type { OptionCardData } from "@/state/store";
 
 export type AutomationKind = "schedule" | "webhook" | "app";
@@ -116,6 +117,7 @@ const dayName = (day: number, style: "long" | "short") => new Date(2026, 0, 4 + 
 
 /** "Every weekday at 9 AM", "Every Monday at 5 PM", "Every 30 minutes", "On Monday, October 19 at 9 AM". */
 export function plainWhen(schedule: RoutineSchedule): string {
+  if (schedule.type === "limit_reset") return limitResetWhen(schedule);
   if (schedule.type === "once") {
     return t("automations.when.once", { date: new Date(schedule.at).toLocaleDateString(locale(), { weekday: "long", month: "long", day: "numeric" }), time: clock(schedule.at, true) });
   }
@@ -253,7 +255,8 @@ export function automationStatus(automation: Pick<Automation, "enabled" | "runs"
 
 /** A one-time automation whose time has passed: turning it back on would have nothing to do. */
 export const isDone = (automation: Partial<Pick<Automation, "schedule">>, now = Date.now()) =>
-  automation.schedule?.type === "once" && automation.schedule.at <= now;
+  (automation.schedule?.type === "once" && automation.schedule.at <= now) ||
+  (automation.schedule?.type === "limit_reset" && automation.schedule.repeat === "once" && automation.schedule.at !== null && automation.schedule.at <= now);
 
 export const STATUS_WORD: Record<AutomationStatus["state"], LocaleKey> = {
   working: "automations.status.working", paused: "automations.status.paused", "needs-you": "automations.status.needsYou", done: "automations.status.done",
@@ -281,6 +284,7 @@ export function statusLine(automation: Automation, now = Date.now()): string {
   else if (!automation.appTrigger) parts.push(t("automations.notRunYet"));
   if (automation.appTrigger) parts.push(...appStatusParts(automation.appTrigger, Boolean(latest)), ...[skippedToday(automation.appTrigger, now) ?? []].flat());
   if (automation.nextRunAt != null) parts.push(t("automations.next", { when: nextWhen(automation.nextRunAt, now) }));
+  else if (automation.enabled && automation.schedule?.type === "limit_reset") parts.push(t("automations.limit.timeUnknown"));
   return parts.join(" · ");
 }
 

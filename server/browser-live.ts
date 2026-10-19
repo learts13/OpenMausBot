@@ -23,6 +23,8 @@ const INPUT_RELAY = { timeoutMs: 30_000, maxBytes: 65_536 };
 const ENDED_PROBE = { timeoutMs: 5_000, maxBytes: 65_536 };
 /** How long a person's hold outlives their view's dropped stream, for that panel to reconnect and carry on. */
 const RESUME_MS = 2 * 60_000;
+/** What a view hears when its browser closed unused: it stops, where reconnecting would start the browser again. */
+export const BROWSER_ASLEEP_ERROR = { type: "error", retryable: false, asleep: true, message: "This browser closed after it sat unused, to save memory. Reconnect to open it again." };
 
 export class BrowserLiveError extends Error {
   readonly status: number;
@@ -239,7 +241,10 @@ export class BrowserLive {
   private readonly viewers = new Map<string, Viewer>();
   private readonly parked = new Map<string, Parked>();
   private readonly sessionResets = new Map<string, Promise<boolean>>();
-  constructor({ runtime }: { runtime: BrowserRuntime }) { this.runtime = runtime; }
+  constructor({ runtime }: { runtime: BrowserRuntime }) {
+    this.runtime = runtime;
+    runtime.onIdleClose((session) => this.asleep(session));
+  }
 
   private current(viewer: Viewer): boolean {
     try { return !viewer.closed && !viewer.res.destroyed && !viewer.res.writableEnded && viewer.isCurrent(); } catch { return false; }
@@ -706,6 +711,15 @@ export class BrowserLive {
     this.abandonPressedInput(viewer);
     this.runtime.release(session, viewer.id);
     this.control(session);
+  }
+
+  /** Every view of a browser about to close unused stops, while its stream still answers. */
+  private asleep(session: string): void {
+    for (const viewer of this.viewers.values()) {
+      if (viewer.session !== session) continue;
+      this.send(viewer, BROWSER_ASLEEP_ERROR);
+      this.close(viewer);
+    }
   }
 
   closeForSession(session: string): void { this.closeWhere((viewer) => viewer.session === session); }

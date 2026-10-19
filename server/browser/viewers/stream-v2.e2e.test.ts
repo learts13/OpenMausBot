@@ -298,4 +298,30 @@ suite("the v2 stream on real Chrome", () => {
     expect(copied.text.trim()).toBe("copy these words");
     await client.close();
   }, hostTimeout(90_000));
+  it("keeps the panel's socket through an idle close and starts nothing by itself; the person's wake or the bot's next call shows the browser again", async () => {
+    await opened("/still", STILL);
+    const client = await connect("width=1200&height=800&maxWidth=2400&maxHeight=1600");
+    await until(() => client.frames.length, (count) => count > 0);
+    const asleep = async () => {
+      const after = client.messages.length;
+      await sleep(60);
+      expect(await real.service.closeIdle(50)).toContain(target.key);
+      await client.next("asleep", after);
+      await sleep(1_000);
+      expect(client.socket.readyState).toBe(WebSocket.OPEN);
+      expect(real.service.profiles().find((profile) => profile.key === target.key)?.run).toBeNull();
+    };
+    const shown = async (wake: () => Promise<unknown>) => {
+      const after = client.messages.length;
+      const frames = client.frames.length;
+      await wake();
+      await client.next("awake", after);
+      await until(() => client.frames.length, (count) => count > frames);
+    };
+    await asleep();
+    await shown(async () => client.send({ type: "wake" }));
+    await asleep();
+    await shown(async () => expect((await real.call(target, "agent_browser_get_url")).isError).toBeUndefined());
+    await client.close();
+  }, hostTimeout(90_000));
 });

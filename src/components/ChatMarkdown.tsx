@@ -29,7 +29,7 @@ import { looksLikeThreadRefUrl, parseThreadRefUrl, resolveThreadRefAddress, rema
 import { MarkdownImagePreview, MessageFolderFiles, OutsideWorkspaceFile, saveFailureText, useLocalFileSave, type MessageAttachmentContext } from "./AttachmentPreview";
 import { ThreadLink, ThreadRefsContext, threadLinkFromProps, type ThreadRefsValue } from "./ThreadRefs";
 import { MarkdownTable } from "./MarkdownTable";
-import { TableFileButton } from "./TableFilePreview";
+import { FilePreviewButton } from "./FilePreviewButton";
 
 const highlightCache = new Map<string, string>();
 export const HIGHLIGHT_CACHE_MAX = 200;
@@ -585,7 +585,7 @@ function LocalFileLink({ filePath, name, children, message }: { filePath: string
 
   return (
     <span dir="ltr" className="inline-flex flex-wrap items-center gap-x-1.5 [unicode-bidi:isolate]">
-      <TableFileButton path={filePath} name={name ?? fileName(filePath)} message={message} />
+      <FilePreviewButton path={filePath} name={name ?? fileName(filePath)} message={message} />
       <button
         type="button"
         onClick={() => void save.save()}

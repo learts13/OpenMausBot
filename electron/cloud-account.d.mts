@@ -34,6 +34,8 @@ export interface CloudAccountState {
   checkout?: { plan: string; startedAt: number; signIn?: true; link?: true; done?: true };
   /** This app talks to the staging Admin (OMB_CLOUD_STAGING=1): test payments, test Clouds. */
   staging?: true;
+  /** Connected: opening My Cloud waits for it to wake. */
+  waking?: true;
 }
 /** The email-code sign-in (cloud-signin.mjs). `sent`: the code is on its
  * way (`resendAt`: when another may be asked for). `browser`: this Cloud signs
@@ -105,6 +107,8 @@ export interface CloudPlanSnapshot {
   credit?: import("./cloud-home.mjs").CloudCredit;
   /** The trial's popup due now, not yet shown today on either page. */
   notice?: import("./cloud-home.mjs").CloudTrialState;
+  /** Verified: the plan sleeps when idle. */
+  sleeps?: true;
 }
 export interface CloudPlanBridge {
   state(): Promise<CloudPlanSnapshot>;
@@ -162,6 +166,11 @@ export interface CloudAccountClient {
   checkoutPending(): boolean;
   interest(kind: "another_cloud"): Promise<void>;
   homeTarget(): { origin: string } | null;
+  /** The Admin's last word on a Cloud whose plan sleeps; null for any other. */
+  power(): import("./cloud-power.mjs").CloudPower | null;
+  /** Asks the Admin to start a sleeping Cloud (POST /api/cloud/desktop/wake), then reads the session again. */
+  wakeHome(): Promise<"awake" | "waking" | null>;
+  setWaking(on: boolean): void;
   pairHome(): Promise<import("./cloud-home.mjs").CloudHomeGrant>;
   growDisk(sizeGb: number): Promise<{ supported: false } | { supported: true; refused: true } | { supported: true; disk: { gb: number; maxGb: number } }>;
   /** This sign-in's own X research relay access while its plan is paid; null without one. */
@@ -182,6 +191,8 @@ export declare function createCloudAccountClient(options: {
   onState?: (state: CloudAccountState) => void;
   /** Told once per plan name this app predates. Defaults to console.warn. */
   warn?: (message: string) => void;
+  /** Files or lending waits for a sleeping Cloud to wake: the session is read every 15 s. */
+  awaitingWake?: () => boolean;
 }): CloudAccountClient;
 export declare function cloudPlanSnapshot(state: CloudAccountState | null | undefined, extra?: { notice?: import("./cloud-home.mjs").CloudTrialState | null }): CloudPlanSnapshot;
 /** My Cloud's line under its name in the server menus, or null for none. */

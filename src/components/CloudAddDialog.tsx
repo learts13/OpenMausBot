@@ -8,7 +8,7 @@ import type { CloudOffer } from "../../electron/cloud-home.mjs";
 import { track } from "@/lib/analytics";
 import { cn } from "@/lib/cn";
 import { cloudColor, cloudNameShown, DEFAULT_CLOUD_COLOR } from "@/lib/cloud-look";
-import { cloudAddView, offerPlan, sameTerms, type CloudAddView, type CloudSignInPhase } from "@/lib/cloud-plan";
+import { cloudAddView, offerPlan, sameTerms, startedSleeps, type CloudAddView, type CloudSignInPhase } from "@/lib/cloud-plan";
 import { t } from "@/lib/i18n";
 import { welcomeOnScreen } from "@/lib/onboarding";
 import { useStore } from "@/state/store";
@@ -74,7 +74,7 @@ export function CloudAddPanel({ view, ui, actions }: { view: CloudAddView; ui: C
     case "waiting": return <PayScreen plan={view.plan} offer={ui.offerShown} browser={view.browser} late={view.late} link={view.link} email={view.email}
       busy={ui.busy} copied={ui.copied} failed={ui.payFailed} onReopen={actions.reopenCheckout} onCopy={actions.copyLink} onChangePlan={actions.changePlan} />;
     case "starting": case "ready": return <SetupScreen started={view} received={view.kind === "starting" && view.received} step={view.kind === "starting" ? view.step : null}
-      slow={view.kind === "starting" && view.slow} ready={view.kind === "ready"} name={ui.look.name} typed={ui.look.typed} color={ui.look.color}
+      slow={view.kind === "starting" && view.slow} ready={view.kind === "ready"} sleeps={startedSleeps(view, ui.offerShown)} name={ui.look.name} typed={ui.look.typed} color={ui.look.color}
       counting={ui.counting} busy={ui.busy} openFailed={ui.openFailed} onName={actions.name} onColor={actions.color} onOpen={actions.openCloud} onNotNow={actions.notNow} />;
     case "has-cloud": return <OneCloudScreen name={ui.look.name} color={ui.look.color} busy={ui.busy} interest={ui.interest} openFailed={ui.openFailed}
       onInterest={actions.interest} onOpen={actions.openCloud} />;

@@ -117,6 +117,25 @@ To use more than one provider at once, add extra `openai-compat` engines to
 Give each one its own key. An engine without a key uses the key from
 Connections and sends it to that engine's address.
 
+### Free OpenRouter models
+
+A new OpenRouter account with no credit can only use free models. Paid models
+stop with "This model needs OpenRouter credit".
+
+- **Picking one:** the model picker marks free models **(free)**. When the key
+  belongs to a free account, free models that can use tools come first and
+  one of them is the default. Pressing **Test** on the key says so. A model
+  you chose yourself is never changed.
+- **Privacy setting:** if OpenRouter's privacy settings block free models,
+  turns stop with "OpenRouter's privacy settings block this free model". Allow
+  free model endpoints at
+  [openrouter.ai/settings/privacy](https://openrouter.ai/settings/privacy), or
+  pick another model.
+- **Daily limit:** OpenRouter limits how many requests free models take each
+  day, and every step of a bot's turn counts as one. When the limit is used
+  up, wait for it to reset or add credit at
+  [openrouter.ai/credits](https://openrouter.ai/credits) to raise it.
+
 ### Cline engine
 
 1. Install the standalone CLI with `npm install -g cline`.
