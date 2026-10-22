@@ -35,7 +35,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          gn api "repos/milind-soni/OpenMausBot/releases/tags/$RELEASE_TAG" > /tmp/omb-release.json
+          gh api "repos/milind-soni/OpenMausBot/releases/tags/$RELEASE_TAG" > /tmp/omb-release.json
           jq -e --arg tag "$RELEASE_TAG" '.tag_name == $tag and .draft == false and .prerelease == false' /tmp/omb-release.json
       - name: Check out official release source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
