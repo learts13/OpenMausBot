@@ -18,7 +18,8 @@ FROM node:24-bookworm-slim AS server
 RUN test "$(dpkg --print-architecture)" = arm64 \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
-       ca-certificates curl git chromium fonts-noto-color-emoji fonts-noto-cjk fonts-freefont-ttf \
+       ca-certificates curl git openssh-client chromium fonts-noto-color-emoji fonts-noto-cjk fonts-freefont-ttf \
+    && ssh -V \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --home-dir /data --shell /bin/bash maus
 # Chrome for Testing has no Linux ARM64 build; Debian supplies native Chromium.
