@@ -85,3 +85,4 @@ jobs:
           docker push "$image:arm64-$RELEASE_TAG"
           docker push "$image:arm64"
           echo "Published $image:arm64" >> "$GITHUB_STEP_SUMMARY"
+
