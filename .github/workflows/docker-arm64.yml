@@ -11,7 +11,7 @@ on:
 
 env:
   # Change this only to a published stable upstream release.
-  RELEASE_TAG: v0.1.132
+  RELEASE_TAG: v0.1.133
 
 permissions:
   contents: read
