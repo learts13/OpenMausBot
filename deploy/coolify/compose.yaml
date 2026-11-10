@@ -1,0 +1,58 @@
+services:
+  omb:
+    image: ghcr.io/learts13/openmausbot:arm64
+    restart: unless-stopped
+    init: true
+    shm_size: 512m
+    mem_limit: 6g
+    memswap_limit: 6g
+    volumes:
+      - omb_data:/data
+    environment:
+      OMB_PORT: "8799"
+      OMB_WEBHOOK_PORT: "8800"
+      OMB_PUBLIC_URL: "https://bot.learts.dev"
+      OMB_WEBHOOK_PUBLIC_URL: "https://bot.learts.dev"
+    expose:
+      - "8080"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - curl -sf http://127.0.0.1:8799/api/health | grep -q openmausbot
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    network_mode: "service:omb"
+    depends_on:
+      omb:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+    command:
+      - |
+        cat > /tmp/Caddyfile <<'EOF'
+        :8080 {
+          handle /hooks/* {
+            reverse_proxy 127.0.0.1:8800 {
+              header_up X-Forwarded-Proto https
+            }
+          }
+
+          handle {
+            reverse_proxy 127.0.0.1:8799 {
+              header_up X-Forwarded-Proto https
+              flush_interval -1
+            }
+          }
+        }
+        EOF
+        exec caddy run --config /tmp/Caddyfile --adapter caddyfile
+
+volumes:
+  omb_data:
