@@ -1,7 +1,17 @@
 name: Docker ARM64
 
 on:
+  schedule:
+    # Check upstream hourly; the ARM runner is used only when a new release exists.
+    - cron: '17 * * * *'
   workflow_dispatch:
+  pull_request:
+    branches: [feat/arm64-docker]
+    paths:
+      - Dockerfile.arm64
+      - .github/workflows/docker-arm64.yml
+      - .github/workflows/coolify-deploy.yml
+      - scripts/smoke-arm64-image.sh
   push:
     branches: [feat/arm64-docker]
     paths:
@@ -10,32 +20,73 @@ on:
       - scripts/smoke-arm64-image.sh
 
 env:
-  # Change this only to a published stable upstream release.
-  RELEASE_TAG: v0.1.151
+  UPSTREAM_REPOSITORY: milind-soni/OpenMausBot
+  # v0.1.151 was already built, smoke-tested, and deployed successfully.
+  INITIAL_RELEASE_BASELINE: v0.1.151
 
 permissions:
   contents: read
 
 concurrency:
   group: docker-arm64-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
+  resolve-release:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      release_tag: ${{ steps.release.outputs.release_tag }}
+      should_build: ${{ steps.release.outputs.should_build }}
+    steps:
+      - name: Find the latest stable upstream release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+
+          release_json=$(gh api "repos/$UPSTREAM_REPOSITORY/releases/latest")
+          tag=$(jq -r '.tag_name' <<< "$release_json")
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          jq -e --arg tag "$tag" '.tag_name == $tag and .draft == false and .prerelease == false' <<< "$release_json" >/dev/null
+
+          should_build=true
+          if [[ "$EVENT_NAME" != "pull_request" ]]; then
+            marker="arm64-release-$tag"
+            if [[ "$tag" == "$INITIAL_RELEASE_BASELINE" ]] || gh api "repos/$REPOSITORY/git/ref/tags/$marker" >/dev/null 2>&1; then
+              should_build=false
+            fi
+          fi
+
+          echo "release_tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "should_build=$should_build" >> "$GITHUB_OUTPUT"
+          echo "Latest stable upstream release: $tag"
+          echo "Build required: $should_build"
+
   build-test-publish:
+    needs: resolve-release
+    if: needs.resolve-release.outputs.should_build == 'true'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 45
     permissions:
       contents: read
       packages: write
+    env:
+      RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Validate official stable release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          gh api "repos/milind-soni/OpenMausBot/releases/tags/$RELEASE_TAG" > /tmp/omb-release.json
+          gh api "repos/$UPSTREAM_REPOSITORY/releases/tags/$RELEASE_TAG" > /tmp/omb-release.json
           jq -e --arg tag "$RELEASE_TAG" '.tag_name == $tag and .draft == false and .prerelease == false' /tmp/omb-release.json
       - name: Check out official release source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -48,7 +99,8 @@ jobs:
         run: |
           set -euo pipefail
           actual=$(node -p 'require("./release-source/package.json").version')
-          test "$actual" = "${RELEASE_TAG#v}"
+          expected=$(printf '%s' "$RELEASE_TAG" | cut -c2-)
+          test "$actual" = "$expected"
           cp Dockerfile.arm64 release-source/Dockerfile.arm64
           echo "Official release: $RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"
           echo "Source commit: $(git -C release-source rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
@@ -66,22 +118,48 @@ jobs:
           cache-to: type=gha,mode=max,scope=omb-arm64
       - name: Test native modules, browser, server and proxy authentication
         run: bash scripts/smoke-arm64-image.sh openmausbot:arm64-test "$(node -p 'require("./release-source/package.json").version')"
-      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/feat/arm64-docker'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Publish tested image
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/feat/arm64-docker'
         env:
           REPOSITORY: ${{ github.repository }}
           COMMIT_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          image="ghcr.io/${REPOSITORY,,}"
+          image="ghcr.io/$(printf '%s' "$REPOSITORY" | tr '[:upper:]' '[:lower:]')"
           docker tag openmausbot:arm64-test "$image:arm64"
           docker tag openmausbot:arm64-test "$image:arm64-$COMMIT_SHA"
           docker push "$image:arm64-$COMMIT_SHA"
           docker tag openmausbot:arm64-test "$image:arm64-$RELEASE_TAG"
           docker push "$image:arm64-$RELEASE_TAG"
           docker push "$image:arm64"
-          echo "Published $image:arm64" >> "$GITHUB_STEP_SUMMARY"
+          echo "Published $image:arm64 and $image:arm64-$RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"
+
+  record-published-release:
+    needs: [resolve-release, build-test-publish]
+    if: needs.build-test-publish.result == 'success' && github.event_name != 'pull_request' && github.ref == 'refs/heads/feat/arm64-docker'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: ${{ github.repository }}
+      COMMIT_SHA: ${{ github.sha }}
+      RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
+    steps:
+      - name: Mark release as tested and published
+        run: |
+          set -euo pipefail
+          marker="arm64-release-$RELEASE_TAG"
+          if gh api "repos/$REPOSITORY/git/ref/tags/$marker" >/dev/null 2>&1; then
+            echo "Release marker already exists: $marker"
+            exit 0
+          fi
+          gh api --method POST "repos/$REPOSITORY/git/refs" -f "ref=refs/tags/$marker" -f "sha=$COMMIT_SHA"
+          echo "Recorded $RELEASE_TAG as tested and published." >> "$GITHUB_STEP_SUMMARY"
