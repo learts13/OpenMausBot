@@ -6,15 +6,33 @@ on:
     types: [completed]
     branches: [feat/arm64-docker]
 
-permissions: {}
+permissions:
+  actions: read
 
 jobs:
   request-coolify-deployment:
-    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == 'learts13/OpenMausBot' && github.event.workflow_run.name == 'Docker ARM64' && github.event.workflow_run.head_branch == 'feat/arm64-docker' }}
+    if: ${{ github.event.workflow_run.event != 'pull_request' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == 'learts13/OpenMausBot' && github.event.workflow_run.name == 'Docker ARM64' && github.event.workflow_run.head_branch == 'feat/arm64-docker' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
+      - name: Confirm a tested image was published
+        id: build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          conclusion=$(gh api "repos/$REPOSITORY/actions/runs/$RUN_ID/jobs?per_page=100" --jq '[.jobs[] | select(.name == "build-test-publish") | .conclusion] | first // "missing"')
+          if [[ "$conclusion" != "success" ]]; then
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping Coolify: no successful image build ran (build job: $conclusion)."
+            exit 0
+          fi
+          echo "deploy=true" >> "$GITHUB_OUTPUT"
+
       - name: Send deployment request to OpenMausBot
+        if: steps.build.outputs.deploy == 'true'
         env:
           WEBHOOK_URL: ${{ secrets.OPENMAUSBOT_COOLIFY_DEPLOY_WEBHOOK }}
           REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}
