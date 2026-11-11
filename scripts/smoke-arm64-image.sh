@@ -39,7 +39,9 @@ const { createUpdateChecker } = await import('/app/dist-server/server/update-che
 const check = createUpdateChecker({
   current: environment.version,
   install: 'docker',
-  fetch: async () => Response.json({ tag_name: 'v999.0.0' }),
+  fetch: async (url) => String(url).endsWith('/channels/stable.json')
+  ? Response.json({ version: '999.0.0' })
+  : Response.json({ tag_name: 'v999.0.0' }),
 });
 assert.equal((await check()).available, true);
 console.log(`Server reports ${environment.version} and detects a newer release`);
